@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "ipa",
-    "slug": "ipa",
+    "name": "Ghi chú",
+    "slug": "ghi-chu",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "ipa",
+    "scheme": "ghi-chu",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
@@ -13,7 +13,12 @@
       "bundleIdentifier": "4qijiyzb.no0DEVVIPv6.CertApple.com",
       "appleTeamId": "YXYM3HTK79",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSCalendarsUsageDescription": "App cần quyền truy cập Lịch để nhắc nhở ca làm việc.",
+        "NSCalendarsFullAccessUsageDescription": "App cần quyền ghi lịch để lưu nhắc nhở ca làm việc.",
+        "UIBackgroundModes": [
+          "fetch"
+        ]
       }
     },
     "android": {
@@ -24,7 +29,11 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.READ_CALENDAR",
+        "android.permission.WRITE_CALENDAR"
+      ]
     },
     "web": {
       "output": "static",
@@ -33,17 +42,13 @@
     "plugins": [
       "expo-router",
       [
-        "expo-splash-screen",
+        "expo-calendar",
         {
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
-          "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
-          "dark": {
-            "backgroundColor": "#000000"
-          }
+          "calendarPermission": "App cần quyền truy cập Lịch để nhắc nhở ca làm việc."
         }
-      ]
+      ],
+      "./without-push.js",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,
@@ -52,7 +57,7 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "ea17c462-195b-42bd-935d-437d5354e042"
+        "projectId": "9be75124-0dd9-49fd-9df2-e1584dc482b1"
       }
     }
   }
