@@ -23,6 +23,25 @@ type NoteData = {
   noteLines: string[];
 };
 
+// [Hàm mới để xin quyền] Cấu hình xin quyền mạnh mẽ cho iOS
+const requestNotificationsPermissions = async () => {
+  const { status } = await Notifications.requestPermissionsAsync({
+    ios: {
+      allowAlert: true, // Cho phép hiển thị cảnh báo (bao gồm màn hình khóa)
+      allowBadge: true, // Cho phép hiện số trên icon
+      allowSound: true, // Cho phép âm thanh
+     // allowAnnouncements: true, // Cho phép Siri đọc thông báo
+    },
+    android: {} // Giữ trống để dùng default
+  });
+
+  if (status !== 'granted') {
+    // Không cần Alert ở đây vì màn hình chính có thể làm phiền
+    console.log('Chưa có quyền thông báo.');
+  }
+};
+
+
 export default function CalendarScreen() {
   const { colors, theme } = useTheme();
   const [currentMonth, setCurrentMonth] = useState(new Date()); 
@@ -46,7 +65,8 @@ export default function CalendarScreen() {
     useCallback(() => {
       const loadAllData = async () => {
         try {
-          const { status } = await Notifications.requestPermissionsAsync();
+          // [SỬA] Gọi hàm xin quyền mạnh mẽ hơn
+          await requestNotificationsPermissions();
           
           const savedDate = await AsyncStorage.getItem('CYCLE_START_DATE');
           if (savedDate) setCycleStartDate(new Date(savedDate));
@@ -184,7 +204,15 @@ export default function CalendarScreen() {
   };
 
   const getNotesByContent = () => {
-    const byDateList = getNotesByDate();
+    const start = startOfMonth(currentMonth);
+    const end = endOfMonth(currentMonth);
+    const byDateList = eachDayOfInterval({ start, end }).map(day => {
+      const dateKey = format(day, 'yyyy-MM-dd');
+      const data = notes[dateKey];
+      if (data?.noteLines?.length > 0) return { date: day, noteLines: data.noteLines };
+      return null;
+    }).filter(item => item !== null) as { date: Date, noteLines: string[] }[];
+
     const aggregator: Record<string, string[]> = {};
     byDateList.forEach(item => {
       const dayStr = format(item.date, 'd'); 

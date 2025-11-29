@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   StyleSheet, Text, View, TouchableOpacity, TextInput, 
   ScrollView, Alert, KeyboardAvoidingView, Platform, ActivityIndicator 
@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import * as Clipboard from 'expo-clipboard';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 // [QUAN TRỌNG] Import thư viện Gemini
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
@@ -23,15 +24,19 @@ export default function MediaScreen() {
 
   // --- STATE CHUNG ---
   const [apiKey, setApiKey] = useState('');
-  const [mediaType, setMediaType] = useState<'video' | 'image'>('video'); // Chế độ Video/Ảnh
-  const [isGenerating, setIsGenerating] = useState(false); // Trạng thái đang gọi API
+  const [mediaType, setMediaType] = useState<'video' | 'image'>('video'); 
+  const [isGenerating, setIsGenerating] = useState(false); 
+
+  // --- STATE CẤU HÌNH CHUNG CHO NHÂN VẬT ---
+  const [charMaxChars, setCharMaxChars] = useState('300'); 
 
   // --- STATE VIDEO ---
   const [videoChars, setVideoChars] = useState<Character[]>([{ id: '1', name: '', desc: '', generatedPrompt: '' }]);
   const [videoPromptMain, setVideoPromptMain] = useState('');
   const [videoStyle, setVideoStyle] = useState('');
   const [videoMaxChars, setVideoMaxChars] = useState('1000'); 
-  const [videoResult, setVideoResult] = useState(''); 
+  const [videoResultEn, setVideoResultEn] = useState(''); // Kết quả Tiếng Anh
+  const [videoResultVi, setVideoResultVi] = useState(''); // Kết quả Tiếng Việt
 
   // --- STATE ẢNH ---
   const [imageChars, setImageChars] = useState<Character[]>([{ id: '1', name: '', desc: '', generatedPrompt: '' }]);
@@ -40,12 +45,64 @@ export default function MediaScreen() {
   const [imageSize, setImageSize] = useState('1024x1024');
   const [imageResolution, setImageResolution] = useState('High');
   const [imageMaxChars, setImageMaxChars] = useState('500');
-  const [imageResult, setImageResult] = useState('');
+  const [imageResultEn, setImageResultEn] = useState(''); // Kết quả Tiếng Anh
+  const [imageResultVi, setImageResultVi] = useState(''); // Kết quả Tiếng Việt
 
-  // --- HÀM XỬ LÝ GỌI API ---
+  // --- LOAD VÀ SAVE KEY TỰ ĐỘNG ---
+  useEffect(() => {
+    const loadKey = async () => {
+      try {
+        const savedKey = await AsyncStorage.getItem('GEMINI_API_KEY');
+        if (savedKey) setApiKey(savedKey);
+      } catch (e) {
+        console.log("Lỗi load key:", e);
+      }
+    };
+    loadKey();
+  }, []);
 
-  // Hàm gọi Gemini chung
-  const callGemini = async (promptInput: string, maxChars: number) => {
+  const handleKeyChange = async (text: string) => {
+    setApiKey(text);
+    try {
+      await AsyncStorage.setItem('GEMINI_API_KEY', text);
+    } catch (e) {
+      console.log("Lỗi lưu key:", e);
+    }
+  };
+
+  // --- HÀM XÓA TẤT CẢ DỮ LIỆU ---
+  const handleClearAll = () => {
+    Alert.alert(
+        "Dọn dẹp", 
+        `Đại ca muốn xóa trắng toàn bộ dữ liệu bên tab ${mediaType === 'video' ? 'Video' : 'Ảnh'} không?`,
+        [
+            { text: "Hủy", style: "cancel" },
+            { 
+                text: "Xóa sạch", 
+                style: 'destructive', 
+                onPress: () => {
+                    if (mediaType === 'video') {
+                        setVideoChars([{ id: '1', name: '', desc: '', generatedPrompt: '' }]);
+                        setVideoPromptMain('');
+                        setVideoStyle('');
+                        setVideoResultEn('');
+                        setVideoResultVi('');
+                    } else {
+                        setImageChars([{ id: '1', name: '', desc: '', generatedPrompt: '' }]);
+                        setImagePromptMain('');
+                        setImageStyle('');
+                        setImageResultEn('');
+                        setImageResultVi('');
+                    }
+                }
+            }
+        ]
+    );
+  };
+
+  // --- HÀM XỬ LÝ GỌI API (TRẢ VỀ CẢ VIỆT VÀ ANH) ---
+
+  const callGemini = async (promptInput: string, maxChars: number, mode: 'video' | 'image' | 'character', style: string = '') => {
     if (!apiKey.trim()) {
       Alert.alert("Thiếu Key", "Anh hai ơi, nhập API Key Gemini vào ô trên cùng trước nhé!");
       return null;
@@ -54,23 +111,88 @@ export default function MediaScreen() {
     setIsGenerating(true);
     try {
       const genAI = new GoogleGenerativeAI(apiKey);
-      // Dùng model flash cho nhanh và rẻ
-      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); 
+      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" }); 
       
-      const finalPrompt = `
-        Nhiệm vụ: Viết một prompt (câu lệnh nhắc) bằng tiếng Anh để dùng cho các công cụ tạo ảnh/video AI (như Midjourney, Runway, Sora).
-        Yêu cầu:
-        - Nội dung gốc: "${promptInput}"
-        - Phong cách viết: Chi tiết, mô tả ánh sáng, màu sắc, góc quay (nếu là video), độ phân giải cao (8k, photorealistic).
-        - Độ dài: Không quá ${maxChars} ký tự.
-        - Chỉ trả về nội dung prompt tiếng Anh, không giải thích thêm.
-      `;
+      let finalPrompt = '';
+
+      if (mode === 'character') {
+        // Character: Chỉ cần tiếng Anh để làm prompt
+        finalPrompt = `
+          Role: Character Concept Artist.
+          Task: Describe the physical appearance and clothing of the character based on the input.
+          Input: "${promptInput}"
+          Requirements: Focus ONLY on visuals. No style/quality tags. Under ${maxChars} chars.
+          Output: Return ONLY the English description.
+        `;
+      } 
+      else if (mode === 'video') {
+        // Video: Cần trả về 2 phần (Việt và Anh)
+        finalPrompt = `
+          Role: Expert AI Video Prompter.
+          Task: Create a video prompt based on the input.
+          
+          --- INPUT DATA ---
+          ${promptInput}
+          Visual Style: "${style}" 
+          ------------------
+
+          Requirements:
+          1. DURATION: Max 8 seconds. Plan timeline (e.g., [0-2s]).
+          2. CHARACTERS: Use names for known characters. Only describe new ones.
+          3. STYLE: Follow "${style}".
+          4. CAMERA: Explicit movement.
+          5. LENGTH: Under ${maxChars} chars.
+          
+          *** OUTPUT FORMAT (STRICTLY FOLLOW THIS) ***
+          Please return the result in exactly two parts separated by "|||".
+          Part 1: A detailed description of the video content in VIETNAMESE.
+          Part 2: The actual prompt in ENGLISH.
+          
+          Example:
+          Cảnh quay bắt đầu với... ||| Cinematic shot of...
+        `;
+      } else {
+        // Image: Cần trả về 2 phần (Việt và Anh)
+        finalPrompt = `
+          Role: Expert AI Image Prompter.
+          Task: Create an image prompt.
+          
+          --- INPUT DATA ---
+          Content: "${promptInput}"
+          Style: "${style}"
+          ------------------
+          
+          Requirements:
+          1. VISUALS: Details, lighting, composition.
+          2. QUALITY: 8k, photorealistic.
+          3. LENGTH: Under ${maxChars} chars.
+
+          *** OUTPUT FORMAT (STRICTLY FOLLOW THIS) ***
+          Please return the result in exactly two parts separated by "|||".
+          Part 1: A detailed description in VIETNAMESE.
+          Part 2: The actual prompt in ENGLISH.
+        `;
+      }
       
       const result = await model.generateContent(finalPrompt);
       const response = await result.response;
-      return response.text();
-    } catch (error) {
-      Alert.alert("Lỗi AI", "Không kết nối được Gemini. Kiểm tra lại Key hoặc mạng nhé đại ca!");
+      const text = response.text();
+
+      // Xử lý tách chuỗi cho Video và Image
+      if (mode !== 'character' && text.includes('|||')) {
+          const parts = text.split('|||');
+          return {
+              vi: parts[0].trim(),
+              en: parts[1].trim()
+          };
+      }
+
+      // Mặc định (cho character hoặc nếu lỗi tách chuỗi)
+      return { vi: '', en: text.trim() };
+
+    } catch (error: any) {
+      const errorMessage = error.message || JSON.stringify(error);
+      Alert.alert("Lỗi AI", "Gemini báo lỗi nè anh hai: " + errorMessage);
       console.error(error);
       return null;
     } finally {
@@ -78,13 +200,11 @@ export default function MediaScreen() {
     }
   };
 
-  // Copy vào clipboard
   const copyToClipboard = async (text: string) => {
     await Clipboard.setStringAsync(text);
     Alert.alert("Đã copy", "Đã lưu vào bộ nhớ tạm!");
   };
 
-  // Quản lý danh sách nhân vật (Thêm/Xóa/Sửa) - Dùng chung logic
   const updateCharsList = (
     chars: Character[], 
     setChars: React.Dispatch<React.SetStateAction<Character[]>>, 
@@ -104,61 +224,72 @@ export default function MediaScreen() {
     }
   };
 
-  // 1. Tạo Prompt cho từng Nhân vật
+  // 1. Tạo Prompt cho từng Nhân vật (Chỉ lấy tiếng Anh)
   const generateCharPrompt = async (chars: Character[], setChars: any, id: string) => {
     const char = chars.find(c => c.id === id);
     if (!char || !char.name || !char.desc) {
         Alert.alert("Thiếu thông tin", "Nhập tên và mô tả trước đã đại ca!");
         return;
     }
-    const promptInput = `Mô tả ngoại hình nhân vật: Tên ${char.name}, đặc điểm ${char.desc}`;
-    const result = await callGemini(promptInput, 300); // Giới hạn mô tả nhân vật khoảng 300 ký tự
-    if (result) updateCharsList(chars, setChars, 'update', id, 'generatedPrompt', result);
+    const promptInput = `Character Description: Name: ${char.name}. Features: ${char.desc}`;
+    const limit = parseInt(charMaxChars) || 300; 
+    
+    const result = await callGemini(promptInput, limit, 'character'); 
+    if (result && result.en) {
+        updateCharsList(chars, setChars, 'update', id, 'generatedPrompt', result.en);
+    }
   };
 
   // 2. Tạo Prompt Tổng hợp VIDEO
   const generateVideoPromptTotal = async () => {
-    let promptInput = `Tạo prompt video phong cách ${videoStyle}.\n`;
+    let promptInput = ``;
     
-    // Gộp thông tin nhân vật
     if (videoChars.some(c => c.name)) {
-      promptInput += `Các nhân vật:\n`;
+      promptInput += `Characters involved (Known characters):\n`;
       videoChars.forEach(c => {
-        // Ưu tiên dùng prompt AI đã tạo, nếu chưa có thì dùng mô tả thô
         const charDesc = c.generatedPrompt || `${c.name}: ${c.desc}`;
-        if (charDesc.trim()) promptInput += `- ${charDesc}\n`;
+        if (charDesc.trim()) promptInput += `- Name: ${c.name}. Description: ${charDesc}\n`;
       });
     }
     
-    promptInput += `\nNội dung cảnh quay: ${videoPromptMain}`;
+    promptInput += `\nScene Action/Story: ${videoPromptMain}`;
     
     const limit = parseInt(videoMaxChars) || 1000;
-    const result = await callGemini(promptInput, limit);
-    if (result) setVideoResult(result);
+    
+    const result = await callGemini(promptInput, limit, 'video', videoStyle);
+    if (result) {
+        setVideoResultEn(result.en);
+        setVideoResultVi(result.vi);
+    }
   };
 
   // 3. Tạo Prompt Tổng hợp ẢNH
   const generateImagePromptTotal = async () => {
-    let promptInput = `Tạo prompt ảnh phong cách ${imageStyle}. Kích thước ${imageSize}, độ phân giải ${imageResolution}.\n`;
+    let promptInput = `Aspect Ratio/Size: ${imageSize}, Resolution: ${imageResolution}.\n`;
     
     if (imageChars.some(c => c.name)) {
-        promptInput += `Các nhân vật:\n`;
+        promptInput += `Characters present:\n`;
         imageChars.forEach(c => {
           const charDesc = c.generatedPrompt || `${c.name}: ${c.desc}`;
           if (charDesc.trim()) promptInput += `- ${charDesc}\n`;
         });
       }
 
-    promptInput += `\nNội dung bức ảnh: ${imagePromptMain}`;
+    promptInput += `\nImage Content/Idea: ${imagePromptMain}`;
 
     const limit = parseInt(imageMaxChars) || 500;
-    const result = await callGemini(promptInput, limit);
-    if (result) setImageResult(result);
+    
+    const result = await callGemini(promptInput, limit, 'image', imageStyle);
+    if (result) {
+        setImageResultEn(result.en);
+        setImageResultVi(result.vi);
+    }
   };
 
   const dynamicStyles = {
     container: { flex: 1, backgroundColor: colors.bg },
-    title: { fontSize: 24, fontWeight: 'bold' as const, color: colors.text, marginBottom: 20 },
+    header: { flexDirection: 'row' as const, justifyContent: 'space-between' as const, alignItems: 'center' as const, marginBottom: 20 },
+    title: { fontSize: 24, fontWeight: 'bold' as const, color: colors.text },
     label: { fontSize: 14, fontWeight: '600' as const, color: colors.subText, marginBottom: 5, marginTop: 15 },
     input: { 
       backgroundColor: colors.iconBg, color: colors.text, borderRadius: 10, padding: 12, fontSize: 15,
@@ -172,9 +303,13 @@ export default function MediaScreen() {
     btnSecondary: { backgroundColor: colors.accent, padding: 10, borderRadius: 8, alignItems: 'center' as const, marginTop: 10 },
     btnText: { color: '#fff', fontWeight: 'bold' as const, fontSize: 16 },
     resultBox: { backgroundColor: colors.inputBg, padding: 15, borderRadius: 10, marginTop: 20, borderWidth: 1, borderColor: colors.border },
-    resultText: { color: colors.text, fontSize: 14, fontStyle: 'italic' as const },
+    resultTitle: { color: colors.subText, fontSize: 11, fontWeight: 'bold' as const, marginBottom: 5, textTransform: 'uppercase' as const },
+    resultText: { color: colors.text, fontSize: 14, fontStyle: 'italic' as const, lineHeight: 20 },
     tabBtn: { flex: 1, padding: 12, alignItems: 'center' as const, justifyContent: 'center' as const, borderRadius: 8 },
     tabText: { fontWeight: 'bold' as const },
+    charConfigRow: { flexDirection: 'row' as const, justifyContent: 'space-between' as const, alignItems: 'center' as const, marginBottom: 10, marginTop: 10 },
+    smallInput: { width: 80, textAlign: 'center' as const, padding: 8, height: 40 },
+    clearBtn: { padding: 8, backgroundColor: colors.iconBg, borderRadius: 8 },
   };
 
   return (
@@ -182,18 +317,24 @@ export default function MediaScreen() {
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 100 }}>
           
-          <Text style={dynamicStyles.title}>Media Creator 🎬</Text>
+          {/* HEADER VỚI NÚT XÓA TẤT CẢ */}
+          <View style={dynamicStyles.header}>
+              <Text style={dynamicStyles.title}>Media Creator 🎬</Text>
+              <TouchableOpacity onPress={handleClearAll} style={dynamicStyles.clearBtn}>
+                  <Ionicons name="trash-bin-outline" size={24} color="#EF4444" />
+              </TouchableOpacity>
+          </View>
 
           {/* Ô NHẬP KEY */}
-          <Text style={dynamicStyles.label}>API Key (Gemini):</Text>
+          <Text style={[dynamicStyles.label, {marginTop: 0}]}>API Key (Gemini):</Text>
           <View style={{flexDirection: 'row', alignItems: 'center'}}>
              <TextInput 
                 style={[dynamicStyles.input, {flex: 1}]} 
                 placeholder="Dán key Gemini vào đây..." 
                 placeholderTextColor={colors.subText}
-                secureTextEntry // Che key đi cho bảo mật
+                secureTextEntry 
                 value={apiKey}
-                onChangeText={setApiKey}
+                onChangeText={handleKeyChange} 
              />
           </View>
 
@@ -215,14 +356,25 @@ export default function MediaScreen() {
 
           {/* --- PHẦN GIAO DIỆN VIDEO --- */}
           {mediaType === 'video' && (
-            <View style={{marginTop: 20}}>
+            <View style={{marginTop: 10}}>
                
-               {/* PHẦN NHÂN VẬT */}
-               <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}}>
+               {/* THANH CẤU HÌNH NHÂN VẬT CHUNG */}
+               <View style={dynamicStyles.charConfigRow}>
                   <Text style={[dynamicStyles.label, {marginTop: 0}]}>Nhân Vật:</Text>
-                  <TouchableOpacity onPress={() => updateCharsList(videoChars, setVideoChars, 'add')}>
-                     <Text style={{color: colors.primary, fontWeight: 'bold'}}>+ Thêm mới</Text>
-                  </TouchableOpacity>
+                  <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                    <Text style={{color: colors.subText, fontSize: 12, marginRight: 5}}>Max Ký tự:</Text>
+                    <TextInput 
+                        style={[dynamicStyles.input, dynamicStyles.smallInput]} 
+                        placeholder="300"
+                        keyboardType="numeric"
+                        placeholderTextColor={colors.subText}
+                        value={charMaxChars}
+                        onChangeText={setCharMaxChars}
+                    />
+                    <TouchableOpacity onPress={() => updateCharsList(videoChars, setVideoChars, 'add')} style={{marginLeft: 15}}>
+                        <Ionicons name="add-circle" size={32} color={colors.primary} />
+                    </TouchableOpacity>
+                  </View>
                </View>
 
                {videoChars.map((char, index) => (
@@ -233,7 +385,6 @@ export default function MediaScreen() {
                           <Ionicons name="trash-outline" size={20} color="#EF4444" />
                        </TouchableOpacity>
                     </View>
-                    
                     <TextInput 
                       style={[dynamicStyles.input, {marginBottom: 10}]} 
                       placeholder="Tên nhân vật (VD: Cô gái tóc vàng)..." 
@@ -249,17 +400,13 @@ export default function MediaScreen() {
                       value={char.desc}
                       onChangeText={(text) => updateCharsList(videoChars, setVideoChars, 'update', char.id, 'desc', text)}
                     />
-                    
-                    {/* Nút tạo prompt nhân vật riêng lẻ */}
                     <TouchableOpacity 
                         style={[dynamicStyles.btnSecondary, isGenerating && {opacity: 0.5}]} 
                         onPress={() => generateCharPrompt(videoChars, setVideoChars, char.id)}
                         disabled={isGenerating}
                     >
-                        <Text style={{color: '#fff', fontWeight: 'bold'}}>✨ Tạo mô tả nhân vật (AI)</Text>
+                        <Text style={{color: '#fff', fontWeight: 'bold'}}>✨ Tạo mô tả NV (AI)</Text>
                     </TouchableOpacity>
-
-                    {/* Hiển thị kết quả prompt nhân vật */}
                     {char.generatedPrompt ? (
                         <View style={[dynamicStyles.resultBox, {marginTop: 10, padding: 10}]}>
                             <Text style={{color: colors.text, fontSize: 12}}>{char.generatedPrompt}</Text>
@@ -275,7 +422,7 @@ export default function MediaScreen() {
                <Text style={dynamicStyles.label}>Nội dung Video (Prompt chính):</Text>
                <TextInput 
                   style={[dynamicStyles.input, {height: 100, textAlignVertical: 'top'}]} 
-                  placeholder="Mô tả hành động, bối cảnh video..." 
+                  placeholder="Mô tả hành động, bối cảnh video (VD: Tèo đang chạy bộ trong công viên...)" 
                   placeholderTextColor={colors.subText}
                   multiline
                   value={videoPromptMain}
@@ -316,14 +463,23 @@ export default function MediaScreen() {
                   {isGenerating ? <ActivityIndicator color="#fff" /> : <Text style={dynamicStyles.btnText}>✨ Tạo Prompt Video Tổng Hợp</Text>}
                </TouchableOpacity>
 
-               {/* KẾT QUẢ */}
-               {videoResult ? (
-                 <View style={dynamicStyles.resultBox}>
-                    <Text style={{color: colors.subText, marginBottom: 5, fontSize: 12}}>KẾT QUẢ PROMPT:</Text>
-                    <Text style={dynamicStyles.resultText}>{videoResult}</Text>
-                    <TouchableOpacity style={{alignSelf: 'flex-end', marginTop: 10}} onPress={() => copyToClipboard(videoResult)}>
-                       <Text style={{color: colors.primary, fontWeight: 'bold'}}>Copy Toàn Bộ</Text>
-                    </TouchableOpacity>
+               {/* KẾT QUẢ HIỂN THỊ */}
+               {(videoResultEn || videoResultVi) ? (
+                 <View style={{marginTop: 20}}>
+                    {/* Ô Tiếng Việt */}
+                    <View style={[dynamicStyles.resultBox, {borderColor: colors.accent}]}>
+                        <Text style={[dynamicStyles.resultTitle, {color: colors.accent}]}>🇻🇳 MÔ TẢ TIẾNG VIỆT (THAM KHẢO)</Text>
+                        <Text style={dynamicStyles.resultText}>{videoResultVi}</Text>
+                    </View>
+
+                    {/* Ô Tiếng Anh */}
+                    <View style={[dynamicStyles.resultBox, {marginTop: 15, borderColor: colors.primary}]}>
+                        <Text style={[dynamicStyles.resultTitle, {color: colors.primary}]}>🇺🇸 PROMPT TIẾNG ANH (COPY)</Text>
+                        <Text style={dynamicStyles.resultText}>{videoResultEn}</Text>
+                        <TouchableOpacity style={{alignSelf: 'flex-end', marginTop: 10}} onPress={() => copyToClipboard(videoResultEn)}>
+                           <Text style={{color: colors.primary, fontWeight: 'bold'}}>COPY</Text>
+                        </TouchableOpacity>
+                    </View>
                  </View>
                ) : null}
             </View>
@@ -331,14 +487,25 @@ export default function MediaScreen() {
 
           {/* --- PHẦN GIAO DIỆN ẢNH --- */}
           {mediaType === 'image' && (
-            <View style={{marginTop: 20}}>
+            <View style={{marginTop: 10}}>
                
-                 {/* PHẦN NHÂN VẬT (ẢNH) */}
-                 <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}}>
+               {/* THANH CẤU HÌNH NHÂN VẬT CHUNG */}
+               <View style={dynamicStyles.charConfigRow}>
                   <Text style={[dynamicStyles.label, {marginTop: 0}]}>Nhân Vật (Nếu có):</Text>
-                  <TouchableOpacity onPress={() => updateCharsList(imageChars, setImageChars, 'add')}>
-                     <Text style={{color: colors.primary, fontWeight: 'bold'}}>+ Thêm mới</Text>
-                  </TouchableOpacity>
+                  <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                    <Text style={{color: colors.subText, fontSize: 12, marginRight: 5}}>Max Ký tự:</Text>
+                    <TextInput 
+                        style={[dynamicStyles.input, dynamicStyles.smallInput]} 
+                        placeholder="300"
+                        keyboardType="numeric"
+                        placeholderTextColor={colors.subText}
+                        value={charMaxChars}
+                        onChangeText={setCharMaxChars}
+                    />
+                    <TouchableOpacity onPress={() => updateCharsList(imageChars, setImageChars, 'add')} style={{marginLeft: 15}}>
+                         <Ionicons name="add-circle" size={32} color={colors.primary} />
+                    </TouchableOpacity>
+                  </View>
                </View>
 
                {imageChars.map((char, index) => (
@@ -349,7 +516,6 @@ export default function MediaScreen() {
                           <Ionicons name="trash-outline" size={20} color="#EF4444" />
                        </TouchableOpacity>
                     </View>
-                    
                     <TextInput 
                       style={[dynamicStyles.input, {marginBottom: 10}]} 
                       placeholder="Tên nhân vật..." 
@@ -370,9 +536,8 @@ export default function MediaScreen() {
                         onPress={() => generateCharPrompt(imageChars, setImageChars, char.id)}
                         disabled={isGenerating}
                     >
-                        <Text style={{color: '#fff', fontWeight: 'bold'}}>✨ Tạo mô tả nhân vật (AI)</Text>
+                        <Text style={{color: '#fff', fontWeight: 'bold'}}>✨ Tạo mô tả NV (AI)</Text>
                     </TouchableOpacity>
-
                     {char.generatedPrompt ? (
                         <View style={[dynamicStyles.resultBox, {marginTop: 10, padding: 10}]}>
                             <Text style={{color: colors.text, fontSize: 12}}>{char.generatedPrompt}</Text>
@@ -449,13 +614,21 @@ export default function MediaScreen() {
                   {isGenerating ? <ActivityIndicator color="#fff" /> : <Text style={dynamicStyles.btnText}>✨ Tạo Prompt Ảnh Tổng Hợp</Text>}
                </TouchableOpacity>
 
-               {imageResult ? (
-                 <View style={dynamicStyles.resultBox}>
-                    <Text style={{color: colors.subText, marginBottom: 5, fontSize: 12}}>KẾT QUẢ PROMPT:</Text>
-                    <Text style={dynamicStyles.resultText}>{imageResult}</Text>
-                    <TouchableOpacity style={{alignSelf: 'flex-end', marginTop: 10}} onPress={() => copyToClipboard(imageResult)}>
-                       <Text style={{color: colors.primary, fontWeight: 'bold'}}>Copy Toàn Bộ</Text>
-                    </TouchableOpacity>
+               {/* KẾT QUẢ HIỂN THỊ */}
+               {(imageResultEn || imageResultVi) ? (
+                 <View style={{marginTop: 20}}>
+                    <View style={[dynamicStyles.resultBox, {borderColor: colors.accent}]}>
+                        <Text style={[dynamicStyles.resultTitle, {color: colors.accent}]}>🇻🇳 MÔ TẢ TIẾNG VIỆT (THAM KHẢO)</Text>
+                        <Text style={dynamicStyles.resultText}>{imageResultVi}</Text>
+                    </View>
+
+                    <View style={[dynamicStyles.resultBox, {marginTop: 15, borderColor: colors.primary}]}>
+                        <Text style={[dynamicStyles.resultTitle, {color: colors.primary}]}>🇺🇸 PROMPT TIẾNG ANH (COPY)</Text>
+                        <Text style={dynamicStyles.resultText}>{imageResultEn}</Text>
+                        <TouchableOpacity style={{alignSelf: 'flex-end', marginTop: 10}} onPress={() => copyToClipboard(imageResultEn)}>
+                           <Text style={{color: colors.primary, fontWeight: 'bold'}}>COPY</Text>
+                        </TouchableOpacity>
+                    </View>
                  </View>
                ) : null}
             </View>

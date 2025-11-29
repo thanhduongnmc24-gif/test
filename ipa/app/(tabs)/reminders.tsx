@@ -58,8 +58,25 @@ export default function RemindersScreen() {
   }, []);
 
   const requestPermissions = async () => {
-    const { status } = await Notifications.requestPermissionsAsync();
-    if (status !== 'granted') console.log('Chưa có quyền thông báo');
+    // [SỬA] Yêu cầu quyền thông báo chi tiết cho iOS
+    const { status } = await Notifications.requestPermissionsAsync({
+      ios: {
+        allowAlert: true, // Cho phép hiển thị cảnh báo (bao gồm màn hình khóa)
+        allowBadge: true, // Cho phép hiện số trên icon
+        allowSound: true, // Cho phép âm thanh
+        //allowAnnouncements: true, // Cho phép Siri đọc thông báo
+      },
+      android: {
+        // Có thể thêm cấu hình Android nếu cần, nhưng để trống thì nó sẽ dùng default
+      }
+    });
+
+    if (status !== 'granted') {
+        Alert.alert(
+            'Cần quyền', 
+            'Đại ca ơi, Tèo cần quyền thông báo. Anh mở Cài đặt để bật lên cho Tèo nhé!'
+        );
+    }
   };
 
   const loadReminders = async () => {
