@@ -13,7 +13,7 @@ const withWidget = (config) => {
     return config;
   });
 
-  // 2. Chỉnh sửa Xcode Project (Chế độ chỉnh tay)
+  // 2. Chỉnh sửa Xcode Project (Chế độ chỉnh tay toàn diện)
   config = withXcodeProject(config, async (config) => {
     const projectPath = config.modResults.filepath;
     const project = xcode.project(projectPath);
@@ -24,13 +24,14 @@ const withWidget = (config) => {
         return;
       }
 
-      // --- KHỞI TẠO CÁC UUID (Tự tạo ID cho mọi thứ) ---
+      // --- KHỞI TẠO CÁC UUID ---
       const targetUuid = project.generateUuid();
       const groupUuid = project.generateUuid();
       const configurationListUuid = project.generateUuid();
       const productFileRefUuid = project.generateUuid(); 
       const sourcesBuildPhaseUuid = project.generateUuid();
       const resourcesBuildPhaseUuid = project.generateUuid();
+      const swiftBuildFileUuid = project.generateUuid(); // ID cho file Swift khi build
 
       const mainGroup = project.getFirstProject()['firstProject']['mainGroup'];
 
@@ -67,7 +68,6 @@ const withWidget = (config) => {
       }
 
       // --- 2. THÊM FILE VÀO PROJECT ---
-      // Add file (Cách này an toàn)
       const swiftFile = project.addFile(`${WIDGET_TARGET_NAME}/ShiftWidget.swift`, mainGroup, {});
       const plistFile = project.addFile(`${WIDGET_TARGET_NAME}/Info.plist`, mainGroup, {});
 
@@ -80,28 +80,39 @@ const withWidget = (config) => {
       const mainPbxGroup = project.getPBXGroupByKey(mainGroup);
       mainPbxGroup.children.push({ value: widgetGroup.uuid, comment: WIDGET_TARGET_NAME });
 
-      // --- 3. TẠO BUILD PHASES (Thủ công) ---
-      // Sources
-      project.addBuildPhase(
-        [swiftFile.path], 
-        'PBXSourcesBuildPhase', 
-        'Sources', 
-        targetUuid, // Link tới Target UUID sắp tạo
-        'app_extension', 
-        sourcesBuildPhaseUuid
-      );
+      // --- 3. TẠO BUILD FILES (Thủ công - Tránh lỗi addBuildPhase) ---
+      // Tạo đối tượng PBXBuildFile cho ShiftWidget.swift
+      const swiftBuildFile = {
+        isa: 'PBXBuildFile',
+        fileRef: swiftFile.fileRef,
+        settings: {}
+      };
+      project.hash.project.objects['PBXBuildFile'] = project.hash.project.objects['PBXBuildFile'] || {};
+      project.hash.project.objects['PBXBuildFile'][swiftBuildFileUuid] = swiftBuildFile;
 
-      // Resources
-      project.addBuildPhase(
-        [], 
-        'PBXResourcesBuildPhase', 
-        'Resources', 
-        targetUuid, 
-        'app_extension',
-        resourcesBuildPhaseUuid
-      );
+      // --- 4. TẠO BUILD PHASES (Thủ công) ---
+      
+      // Sources Phase (Chứa code Swift)
+      const sourcesPhase = {
+        isa: 'PBXSourcesBuildPhase',
+        buildActionMask: 2147483647,
+        files: [ { value: swiftBuildFileUuid, comment: 'ShiftWidget.swift in Sources' } ],
+        runOnlyForDeploymentPostprocessing: 0
+      };
+      project.hash.project.objects['PBXSourcesBuildPhase'] = project.hash.project.objects['PBXSourcesBuildPhase'] || {};
+      project.hash.project.objects['PBXSourcesBuildPhase'][sourcesBuildPhaseUuid] = sourcesPhase;
 
-      // --- 4. TẠO CONFIGURATION LIST ---
+      // Resources Phase (Rỗng)
+      const resourcesPhase = {
+        isa: 'PBXResourcesBuildPhase',
+        buildActionMask: 2147483647,
+        files: [],
+        runOnlyForDeploymentPostprocessing: 0
+      };
+      project.hash.project.objects['PBXResourcesBuildPhase'] = project.hash.project.objects['PBXResourcesBuildPhase'] || {};
+      project.hash.project.objects['PBXResourcesBuildPhase'][resourcesBuildPhaseUuid] = resourcesPhase;
+
+      // --- 5. TẠO CONFIGURATION LIST ---
       const widgetBundleId = `${config.ios.bundleIdentifier}.${WIDGET_TARGET_NAME}`;
       const buildSettings = {
         INFOPLIST_FILE: `${WIDGET_TARGET_NAME}/Info.plist`,
@@ -141,8 +152,7 @@ const withWidget = (config) => {
       project.hash.project.objects['XCConfigurationList'] = project.hash.project.objects['XCConfigurationList'] || {};
       project.hash.project.objects['XCConfigurationList'][configurationListUuid] = xcConfig;
 
-      // --- 5. TẠO NATIVE TARGET (GHI TRỰC TIẾP VÀO HASH) ---
-      // Đây là bước sửa lỗi "undefined name"
+      // --- 6. TẠO NATIVE TARGET (Thủ công) ---
       const nativeTarget = {
         isa: 'PBXNativeTarget',
         buildConfigurationList: configurationListUuid,
@@ -158,22 +168,17 @@ const withWidget = (config) => {
         productType: '"com.apple.product-type.app-extension"',
       };
 
-      // Ghi thẳng vào bộ nhớ của project, không qua hàm trung gian
+      // Ghi thẳng vào bộ nhớ
       project.hash.project.objects['PBXNativeTarget'] = project.hash.project.objects['PBXNativeTarget'] || {};
       project.hash.project.objects['PBXNativeTarget'][targetUuid] = nativeTarget;
-      project.hash.project.objects['PBXNativeTarget'][targetUuid + '_comment'] = WIDGET_TARGET_NAME;
-
+      
       // Thêm Target vào danh sách Target của Project
-      const pbxProjectSection = project.hash.project.objects['PBXProject'];
-      for (const key in pbxProjectSection) {
-          if (!key.endsWith('_comment')) {
-              const pbxProject = pbxProjectSection[key];
-              pbxProject.targets.push({ value: targetUuid, comment: WIDGET_TARGET_NAME });
-              break;
-          }
-      }
+      project.addToPbxProjectSection({ 
+          uuid: targetUuid, 
+          target: nativeTarget 
+      });
 
-      // --- 6. ENTITLEMENTS ---
+      // --- 7. ENTITLEMENTS ---
       const entitlementsContent = `
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
