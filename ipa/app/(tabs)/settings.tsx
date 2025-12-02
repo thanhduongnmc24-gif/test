@@ -9,7 +9,7 @@ import { format } from 'date-fns';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 
-// [QUAN TRỌNG] Đường dẫn import Supabase
+// Import Supabase
 import { supabase } from '../supabaseConfig'; 
 
 export default function SettingsScreen() {
@@ -21,8 +21,9 @@ export default function SettingsScreen() {
   const [timeDay, setTimeDay] = useState(new Date(new Date().setHours(6, 0, 0, 0)));
   const [timeNight, setTimeNight] = useState(new Date(new Date().setHours(18, 0, 0, 0)));
   const [timeOff, setTimeOff] = useState(new Date(new Date().setHours(8, 0, 0, 0)));
-  // [BỎ] Không dùng timeNormal nữa
   
+  // [ĐÃ XÓA] timeNormal ở đây
+
   const [pickerMode, setPickerMode] = useState<'none' | 'date' | 'timeDay' | 'timeNight' | 'timeOff'>('none');
   const [tempDate, setTempDate] = useState(new Date());
 
@@ -66,6 +67,8 @@ export default function SettingsScreen() {
       const tDay = await AsyncStorage.getItem('TIME_DAY'); if (tDay) setTimeDay(new Date(tDay));
       const tNight = await AsyncStorage.getItem('TIME_NIGHT'); if (tNight) setTimeNight(new Date(tNight));
       const tOff = await AsyncStorage.getItem('TIME_OFF'); if (tOff) setTimeOff(new Date(tOff));
+      
+      // [ĐÃ XÓA] Load timeNormal
     } catch (e) { console.error('Lỗi load settings:', e); }
   };
 
@@ -129,7 +132,8 @@ export default function SettingsScreen() {
     if (!user) return;
     setIsSyncing(true);
     try {
-      const keys = ['QUICK_NOTES', 'CALENDAR_NOTES', 'USER_REMINDERS', 'CYCLE_START_DATE', 'NOTIF_ENABLED', 'GEMINI_API_KEY', 'CYCLE_PATTERN'];
+      // [ĐÃ XÓA] timeNormal khỏi danh sách keys nếu cần, nhưng để nguyên cũng không sao vì nó sẽ null
+      const keys = ['QUICK_NOTES', 'CALENDAR_NOTES', 'USER_REMINDERS', 'CYCLE_START_DATE', 'NOTIF_ENABLED', 'GEMINI_API_KEY', 'CYCLE_PATTERN', 'TIME_DAY', 'TIME_NIGHT', 'TIME_OFF'];
       const stores = await AsyncStorage.multiGet(keys);
       
       const dataToSave: any = {};
@@ -165,7 +169,7 @@ export default function SettingsScreen() {
       if (data && data.backup_data) {
         const backup = data.backup_data;
         const pairs: [string, string][] = [];
-        const keys = ['QUICK_NOTES', 'CALENDAR_NOTES', 'USER_REMINDERS', 'CYCLE_START_DATE', 'NOTIF_ENABLED', 'GEMINI_API_KEY', 'CYCLE_PATTERN'];
+        const keys = ['QUICK_NOTES', 'CALENDAR_NOTES', 'USER_REMINDERS', 'CYCLE_START_DATE', 'NOTIF_ENABLED', 'GEMINI_API_KEY', 'CYCLE_PATTERN', 'TIME_DAY', 'TIME_NIGHT', 'TIME_OFF'];
         
         keys.forEach(key => {
             if (backup[key] !== undefined && backup[key] !== null) {
@@ -220,18 +224,15 @@ export default function SettingsScreen() {
     }
   };
 
-  // [SỬA] Giảm padding để hàng thấp hơn
-  const ROW_PADDING = 12; // Cũ là 15
+  const ROW_PADDING = 12; // Padding thấp
 
   const dynamicStyles = {
     container: { flex: 1, backgroundColor: colors.bg },
     headerTitle: { fontSize: 24, fontWeight: 'bold' as const, color: colors.text },
     sectionTitle: { fontSize: 13, fontWeight: 'bold' as const, color: colors.subText, marginBottom: 8, marginTop: 20, textTransform: 'uppercase' as const },
-    // Giảm padding card
     card: { backgroundColor: colors.card, borderRadius: 12, padding: 2, borderWidth: 1, borderColor: colors.border },
     text: { color: colors.text },
     subText: { color: colors.subText },
-    // Giảm kích thước icon box tí xíu
     iconBox: { width: 32, height: 32, borderRadius: 8, backgroundColor: colors.iconBg, justifyContent: 'center' as const, alignItems: 'center' as const },
     separator: { height: 1, backgroundColor: colors.border, marginLeft: 60 },
     authBtn: { backgroundColor: colors.primary, padding: 12, borderRadius: 10, alignItems: 'center' as const, marginTop: 10 },
@@ -345,7 +346,7 @@ export default function SettingsScreen() {
                   <Text style={{flex: 1, fontSize: 16, marginLeft: 15, color: colors.text}}>Giờ nhắc Ngày Nghỉ</Text>
                   <Text style={{fontSize: 16, fontWeight: 'bold', marginRight: 5, color: colors.primary}}>{format(timeOff, 'HH:mm')}</Text>
                 </TouchableOpacity>
-                {/* [BỎ] Đã xóa Giờ nhắc mặc định */}
+                {/* [ĐÃ XÓA HOÀN TOÀN DÒNG 'NHẮC MẶC ĐỊNH'] */}
               </>
             )}
           </View>
@@ -410,7 +411,7 @@ export default function SettingsScreen() {
         </View>
       </ScrollView>
 
-      {/* MODAL CÁC THỨ (GIỮ NGUYÊN) */}
+      {/* MODAL CÁC THỨ */}
       <Modal transparent={true} visible={pickerMode !== 'none'} animationType="slide">
         <View style={dynamicStyles.modalOverlay}>
           <View style={dynamicStyles.pickerContainer}>
