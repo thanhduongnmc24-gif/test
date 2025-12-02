@@ -13,7 +13,7 @@ const withWidget = (config) => {
     return config;
   });
 
-  // 2. Chỉnh sửa Xcode Project
+  // 2. Chỉnh sửa Xcode Project (Chế độ chỉnh tay)
   config = withXcodeProject(config, async (config) => {
     const projectPath = config.modResults.filepath;
     const project = xcode.project(projectPath);
@@ -24,7 +24,7 @@ const withWidget = (config) => {
         return;
       }
 
-      // --- KHỞI TẠO CÁC UUID ---
+      // --- KHỞI TẠO CÁC UUID (Tự tạo ID cho mọi thứ) ---
       const targetUuid = project.generateUuid();
       const groupUuid = project.generateUuid();
       const configurationListUuid = project.generateUuid();
@@ -34,7 +34,7 @@ const withWidget = (config) => {
 
       const mainGroup = project.getFirstProject()['firstProject']['mainGroup'];
 
-      // --- COPY FILE TỪ THƯ MỤC WIDGET VÀO IOS ---
+      // --- COPY FILE ---
       const widgetSourceDir = path.join(__dirname, '../widget');
       const iosDir = path.join(__dirname, '../ios');
       const widgetDestDir = path.join(iosDir, WIDGET_TARGET_NAME);
@@ -61,71 +61,48 @@ const withWidget = (config) => {
       };
       project.addToPbxFileReferenceSection(productFile, productFileRefUuid);
       
-      // Thêm vào nhóm Products
       const productsGroup = project.pbxGroupByName('Products');
       if (productsGroup) {
         project.addToPbxGroup(productFileRefUuid, 'Products');
       }
 
-      // --- 2. TẠO GROUP CHO WIDGET VÀ ADD FILE ---
-      // Add file vào project (chưa link vào build phase vội)
+      // --- 2. THÊM FILE VÀO PROJECT ---
+      // Add file (Cách này an toàn)
       const swiftFile = project.addFile(`${WIDGET_TARGET_NAME}/ShiftWidget.swift`, mainGroup, {});
       const plistFile = project.addFile(`${WIDGET_TARGET_NAME}/Info.plist`, mainGroup, {});
 
-      // Tạo Group chứa 2 file trên
+      // Tạo Group Widget
       const widgetGroup = project.addPbxGroup(
         [swiftFile.fileRef, plistFile.fileRef],
         WIDGET_TARGET_NAME,
         WIDGET_TARGET_NAME
       );
-      
-      // Link Group này vào Main Group của Project
       const mainPbxGroup = project.getPBXGroupByKey(mainGroup);
       mainPbxGroup.children.push({ value: widgetGroup.uuid, comment: WIDGET_TARGET_NAME });
 
-      // --- 3. TẠO NATIVE TARGET (Thủ công) ---
-      const widgetTarget = {
-        isa: 'PBXNativeTarget',
-        buildConfigurationList: configurationListUuid,
-        buildPhases: [
-          { value: sourcesBuildPhaseUuid, comment: 'Sources' },
-          { value: resourcesBuildPhaseUuid, comment: 'Resources' },
-        ],
-        buildRules: [],
-        dependencies: [],
-        name: WIDGET_TARGET_NAME,
-        productName: WIDGET_TARGET_NAME,
-        productReference: productFileRefUuid, // Link tới file .appex
-        productType: '"com.apple.product-type.app-extension"',
-      };
-
-      project.addToPbxNativeTargetSection(widgetTarget);
-      project.addToPbxProjectSection(widgetTarget);
-
-      // --- 4. TẠO BUILD PHASES ---
-      // Sources Phase: Chứa file Swift
+      // --- 3. TẠO BUILD PHASES (Thủ công) ---
+      // Sources
       project.addBuildPhase(
         [swiftFile.path], 
         'PBXSourcesBuildPhase', 
         'Sources', 
-        widgetTarget.uuid, 
+        targetUuid, // Link tới Target UUID sắp tạo
         'app_extension', 
-        sourcesBuildPhaseUuid // Dùng UUID mình tự tạo để kiểm soát
+        sourcesBuildPhaseUuid
       );
 
-      // Resources Phase: (Hiện tại trống, nhưng cần có để không lỗi)
+      // Resources
       project.addBuildPhase(
         [], 
         'PBXResourcesBuildPhase', 
         'Resources', 
-        widgetTarget.uuid, 
+        targetUuid, 
         'app_extension',
         resourcesBuildPhaseUuid
       );
 
-      // --- 5. BUILD CONFIGURATIONS (Settings) ---
+      // --- 4. TẠO CONFIGURATION LIST ---
       const widgetBundleId = `${config.ios.bundleIdentifier}.${WIDGET_TARGET_NAME}`;
-      
       const buildSettings = {
         INFOPLIST_FILE: `${WIDGET_TARGET_NAME}/Info.plist`,
         PRODUCT_BUNDLE_IDENTIFIER: widgetBundleId,
@@ -137,7 +114,6 @@ const withWidget = (config) => {
         CODE_SIGN_ENTITLEMENTS: `${WIDGET_TARGET_NAME}/${WIDGET_TARGET_NAME}.entitlements`,
         MARKETING_VERSION: '1.0',
         CURRENT_PROJECT_VERSION: '1',
-        // Tắt signing cho Github Actions
         CODE_SIGNING_ALLOWED: 'NO', 
         CODE_SIGNING_REQUIRED: 'NO',
         CODE_SIGN_IDENTITY: '""',
@@ -165,7 +141,39 @@ const withWidget = (config) => {
       project.hash.project.objects['XCConfigurationList'] = project.hash.project.objects['XCConfigurationList'] || {};
       project.hash.project.objects['XCConfigurationList'][configurationListUuid] = xcConfig;
 
-      // --- 6. TẠO FILE ENTITLEMENTS ---
+      // --- 5. TẠO NATIVE TARGET (GHI TRỰC TIẾP VÀO HASH) ---
+      // Đây là bước sửa lỗi "undefined name"
+      const nativeTarget = {
+        isa: 'PBXNativeTarget',
+        buildConfigurationList: configurationListUuid,
+        buildPhases: [
+          { value: sourcesBuildPhaseUuid, comment: 'Sources' },
+          { value: resourcesBuildPhaseUuid, comment: 'Resources' },
+        ],
+        buildRules: [],
+        dependencies: [],
+        name: WIDGET_TARGET_NAME,
+        productName: WIDGET_TARGET_NAME,
+        productReference: productFileRefUuid,
+        productType: '"com.apple.product-type.app-extension"',
+      };
+
+      // Ghi thẳng vào bộ nhớ của project, không qua hàm trung gian
+      project.hash.project.objects['PBXNativeTarget'] = project.hash.project.objects['PBXNativeTarget'] || {};
+      project.hash.project.objects['PBXNativeTarget'][targetUuid] = nativeTarget;
+      project.hash.project.objects['PBXNativeTarget'][targetUuid + '_comment'] = WIDGET_TARGET_NAME;
+
+      // Thêm Target vào danh sách Target của Project
+      const pbxProjectSection = project.hash.project.objects['PBXProject'];
+      for (const key in pbxProjectSection) {
+          if (!key.endsWith('_comment')) {
+              const pbxProject = pbxProjectSection[key];
+              pbxProject.targets.push({ value: targetUuid, comment: WIDGET_TARGET_NAME });
+              break;
+          }
+      }
+
+      // --- 6. ENTITLEMENTS ---
       const entitlementsContent = `
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -179,11 +187,9 @@ const withWidget = (config) => {
         </plist>
       `;
       fs.writeFileSync(path.join(widgetDestDir, `${WIDGET_TARGET_NAME}.entitlements`), entitlementsContent.trim());
+      project.addFile(`${WIDGET_TARGET_NAME}/${WIDGET_TARGET_NAME}.entitlements`, widgetGroup.uuid, {});
       
-      // Thêm file entitlements vào project (nhưng không add vào build phase, chỉ cần nằm trong group)
-      const entitlementsFile = project.addFile(`${WIDGET_TARGET_NAME}/${WIDGET_TARGET_NAME}.entitlements`, widgetGroup.uuid, {});
-      
-      // Ghi đè lại Project
+      // Ghi file
       fs.writeFileSync(projectPath, project.writeSync());
     });
 
