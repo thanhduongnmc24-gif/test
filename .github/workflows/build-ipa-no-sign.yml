@@ -8,7 +8,7 @@ jobs:
     runs-on: macos-15
     defaults:
       run:
-        working-directory: ./ipa  # Vẫn giữ cái này vì code anh nằm trong folder ipa
+        working-directory: ./ipa
 
     steps:
       - name: Checkout repository
@@ -24,7 +24,6 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      # [ĐÃ SỬA] Bỏ --no-interactive đi
       - name: Expo Prebuild
         run: npx expo prebuild --platform ios --clean
 
@@ -36,9 +35,13 @@ jobs:
       - name: Build Archive (No Signing)
         run: |
           cd ios
+          # [SỬA LỖI] Lấy tên scheme từ tên file workspace
+          SCHEME=$(basename *.xcworkspace .xcworkspace)
+          echo "Detected Scheme: $SCHEME"
+          
           xcodebuild archive \
             -workspace *.xcworkspace \
-            -scheme "$(grep -m 1 'scheme = ' *.xcodeproj/xcshareddata/xcschemes/*.xcscheme | cut -d '"' -f 2)" \
+            -scheme "$SCHEME" \
             -configuration Release \
             -archivePath ../build/MyApp.xcarchive \
             -sdk iphoneos \
