@@ -15,16 +15,19 @@ import { supabase } from '../supabaseConfig';
 export default function SettingsScreen() {
   const { theme, toggleTheme, colors } = useTheme();
   
-  // --- STATE CÀI ĐẶT CŨ ---
+  // --- STATE CÀI ĐẶT ---
   const [startDate, setStartDate] = useState(new Date());
   const [isNotifEnabled, setIsNotifEnabled] = useState(false);
   const [timeDay, setTimeDay] = useState(new Date(new Date().setHours(6, 0, 0, 0)));
   const [timeNight, setTimeNight] = useState(new Date(new Date().setHours(18, 0, 0, 0)));
   const [timeOff, setTimeOff] = useState(new Date(new Date().setHours(8, 0, 0, 0)));
-  
-  // [ĐÃ XÓA] timeNormal
-  const [pickerMode, setPickerMode] = useState<'none' | 'date' | 'timeDay' | 'timeNight' | 'timeOff'>('none');
+  const [timeNormal, setTimeNormal] = useState(new Date(new Date().setHours(7, 0, 0, 0)));
+  const [pickerMode, setPickerMode] = useState<'none' | 'date' | 'timeDay' | 'timeNight' | 'timeOff' | 'timeNormal'>('none');
   const [tempDate, setTempDate] = useState(new Date());
+
+  // [MỚI] STATE CHU KỲ TÙY CHỈNH
+  // Mặc định là chu kỳ cũ: ['ngay', 'dem', 'nghi']
+  const [cyclePattern, setCyclePattern] = useState<string[]>(['ngay', 'dem', 'nghi']);
 
   // --- STATE AUTH & SYNC (SUPABASE) ---
   const [user, setUser] = useState<any>(null);
@@ -53,12 +56,20 @@ export default function SettingsScreen() {
     try {
       const savedDate = await AsyncStorage.getItem('CYCLE_START_DATE');
       if (savedDate) setStartDate(new Date(savedDate));
+      
       const savedEnabled = await AsyncStorage.getItem('NOTIF_ENABLED');
       if (savedEnabled) setIsNotifEnabled(JSON.parse(savedEnabled));
+      
+      // [MỚI] Load chu kỳ tùy chỉnh
+      const savedPattern = await AsyncStorage.getItem('CYCLE_PATTERN');
+      if (savedPattern) {
+         setCyclePattern(JSON.parse(savedPattern));
+      }
+
       const tDay = await AsyncStorage.getItem('TIME_DAY'); if (tDay) setTimeDay(new Date(tDay));
       const tNight = await AsyncStorage.getItem('TIME_NIGHT'); if (tNight) setTimeNight(new Date(tNight));
       const tOff = await AsyncStorage.getItem('TIME_OFF'); if (tOff) setTimeOff(new Date(tOff));
-      // [ĐÃ XÓA] Load TIME_NORMAL
+      const tNormal = await AsyncStorage.getItem('TIME_NORMAL'); if (tNormal) setTimeNormal(new Date(tNormal));
     } catch (e) { console.error('Lỗi load settings:', e); }
   };
 
@@ -72,11 +83,31 @@ export default function SettingsScreen() {
       await saveSettingItem('NOTIF_ENABLED', JSON.stringify(newState));
   };
 
-  // --- CÁC HÀM XỬ LÝ AUTH ---
+  // --- [MỚI] HÀM XỬ LÝ CHU KỲ ---
+  const addToCycle = async (type: string) => {
+    const newPattern = [...cyclePattern, type];
+    setCyclePattern(newPattern);
+    await saveSettingItem('CYCLE_PATTERN', JSON.stringify(newPattern));
+  };
 
+  const removeLastStep = async () => {
+    if (cyclePattern.length === 0) return;
+    const newPattern = [...cyclePattern];
+    newPattern.pop();
+    setCyclePattern(newPattern);
+    await saveSettingItem('CYCLE_PATTERN', JSON.stringify(newPattern));
+  };
+
+  const resetCycle = async () => {
+    const defaultPattern = ['ngay', 'dem', 'nghi'];
+    setCyclePattern(defaultPattern);
+    await saveSettingItem('CYCLE_PATTERN', JSON.stringify(defaultPattern));
+    Alert.alert("Đã đặt lại", "Chu kỳ đã về mặc định: Ngày - Đêm - Nghỉ");
+  };
+
+  // --- CÁC HÀM XỬ LÝ AUTH ---
   const handleAuth = async () => {
     if (!email || !password) { Alert.alert("Thiếu thông tin", "Nhập email và mật khẩu đi đại ca!"); return; }
-    
     try {
       if (authMode === 'login') {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -98,12 +129,12 @@ export default function SettingsScreen() {
   };
 
   // --- CÁC HÀM XỬ LÝ SYNC ---
-
   const handleBackup = async () => {
     if (!user) return;
     setIsSyncing(true);
     try {
-      const keys = ['QUICK_NOTES', 'CALENDAR_NOTES', 'USER_REMINDERS', 'CYCLE_START_DATE', 'NOTIF_ENABLED', 'GEMINI_API_KEY'];
+      // [MỚI] Thêm CYCLE_PATTERN vào danh sách backup
+      const keys = ['QUICK_NOTES', 'CALENDAR_NOTES', 'USER_REMINDERS', 'CYCLE_START_DATE', 'NOTIF_ENABLED', 'GEMINI_API_KEY', 'CYCLE_PATTERN'];
       const stores = await AsyncStorage.multiGet(keys);
       
       const dataToSave: any = {};
@@ -117,16 +148,11 @@ export default function SettingsScreen() {
          }
       });
 
-      const { error } = await supabase
-        .from('user_sync')
-        .upsert({ 
-            user_id: user.id, 
-            backup_data: dataToSave,
-            updated_at: new Date()
-        });
-
+      const { error } = await supabase.from('user_sync').upsert({ 
+            user_id: user.id, backup_data: dataToSave, updated_at: new Date()
+      });
       if (error) throw error;
-      Alert.alert("Đồng bộ xong!", "Dữ liệu đã được lưu an toàn trên Supabase ⚡️");
+      Alert.alert("Đồng bộ xong!", "Dữ liệu đã được lưu an toàn ⚡️");
     } catch (error: any) {
       Alert.alert("Lỗi sao lưu", error.message);
     } finally {
@@ -138,27 +164,18 @@ export default function SettingsScreen() {
     if (!user) return;
     setIsSyncing(true);
     try {
-      const { data, error } = await supabase
-        .from('user_sync')
-        .select('backup_data')
-        .eq('user_id', user.id)
-        .single();
-
+      const { data, error } = await supabase.from('user_sync').select('backup_data').eq('user_id', user.id).single();
       if (error) throw error;
 
       if (data && data.backup_data) {
         const backup = data.backup_data;
         const pairs: [string, string][] = [];
-        const keys = ['QUICK_NOTES', 'CALENDAR_NOTES', 'USER_REMINDERS', 'CYCLE_START_DATE', 'NOTIF_ENABLED', 'GEMINI_API_KEY'];
+        // [MỚI] Thêm CYCLE_PATTERN vào danh sách restore
+        const keys = ['QUICK_NOTES', 'CALENDAR_NOTES', 'USER_REMINDERS', 'CYCLE_START_DATE', 'NOTIF_ENABLED', 'GEMINI_API_KEY', 'CYCLE_PATTERN'];
         
         keys.forEach(key => {
             if (backup[key] !== undefined && backup[key] !== null) {
-                let valStr = '';
-                if (typeof backup[key] === 'string') {
-                    valStr = backup[key];
-                } else {
-                    valStr = JSON.stringify(backup[key]);
-                }
+                let valStr = typeof backup[key] === 'string' ? backup[key] : JSON.stringify(backup[key]);
                 pairs.push([key, valStr]);
             }
         });
@@ -166,15 +183,13 @@ export default function SettingsScreen() {
         if (pairs.length > 0) {
             await AsyncStorage.multiSet(pairs);
             loadSettings(); 
-            Alert.alert("Thành công", "Đã khôi phục dữ liệu về máy! Anh hai kiểm tra lại các tab nhé.");
+            Alert.alert("Thành công", "Đã khôi phục dữ liệu về máy!");
         } else {
-            Alert.alert("Thông báo", "Trên mây không có dữ liệu nào của các mục này.");
+            Alert.alert("Thông báo", "Không có dữ liệu.");
         }
-      } else {
-        Alert.alert("Trống", "Tài khoản này chưa có bản sao lưu nào.");
       }
     } catch (error: any) {
-      Alert.alert("Lỗi khôi phục", "Không tải được hoặc dữ liệu lỗi.");
+      Alert.alert("Lỗi khôi phục", "Không tải được dữ liệu.");
     } finally {
       setIsSyncing(false);
     }
@@ -187,7 +202,7 @@ export default function SettingsScreen() {
     if (mode === 'timeDay') setTempDate(timeDay);
     if (mode === 'timeNight') setTempDate(timeNight);
     if (mode === 'timeOff') setTempDate(timeOff);
-    // [ĐÃ XÓA] timeNormal
+    if (mode === 'timeNormal') setTempDate(timeNormal);
   };
 
   const confirmPicker = () => {
@@ -195,6 +210,7 @@ export default function SettingsScreen() {
     if (pickerMode === 'timeDay') { setTimeDay(tempDate); saveSettingItem('TIME_DAY', tempDate.toISOString()); }
     if (pickerMode === 'timeNight') { setTimeNight(tempDate); saveSettingItem('TIME_NIGHT', tempDate.toISOString()); }
     if (pickerMode === 'timeOff') { setTimeOff(tempDate); saveSettingItem('TIME_OFF', tempDate.toISOString()); }
+    if (pickerMode === 'timeNormal') { setTimeNormal(tempDate); saveSettingItem('TIME_NORMAL', tempDate.toISOString()); }
     setPickerMode('none');
   };
 
@@ -206,6 +222,7 @@ export default function SettingsScreen() {
         if (pickerMode === 'timeDay') { setTimeDay(selectedDate); saveSettingItem('TIME_DAY', selectedDate.toISOString()); }
         if (pickerMode === 'timeNight') { setTimeNight(selectedDate); saveSettingItem('TIME_NIGHT', selectedDate.toISOString()); }
         if (pickerMode === 'timeOff') { setTimeOff(selectedDate); saveSettingItem('TIME_OFF', selectedDate.toISOString()); }
+        if (pickerMode === 'timeNormal') { setTimeNormal(selectedDate); saveSettingItem('TIME_NORMAL', selectedDate.toISOString()); }
       }
     } else {
       if (selectedDate) setTempDate(selectedDate);
@@ -227,6 +244,23 @@ export default function SettingsScreen() {
     modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' as const },
     pickerContainer: { backgroundColor: colors.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingBottom: 30, borderWidth: 1, borderColor: colors.border },
     pickerHeader: { flexDirection: 'row' as const, justifyContent: 'space-between' as const, padding: 15, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.iconBg, borderTopLeftRadius: 20, borderTopRightRadius: 20 },
+    
+    // [MỚI] Style cho phần cấu hình chu kỳ
+    cycleStep: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center' as const, alignItems: 'center' as const, margin: 2 },
+    cycleBuilder: { flexDirection: 'row' as const, flexWrap: 'wrap' as const, padding: 10, alignItems: 'center' as const, justifyContent: 'center' as const },
+    cycleControl: { flexDirection: 'row' as const, justifyContent: 'space-around' as const, padding: 10, borderTopWidth: 1, borderTopColor: colors.border }
+  };
+
+  const getStepColor = (type: string) => {
+    if (type === 'ngay') return theme === 'dark' ? '#FDB813' : '#F59E0B';
+    if (type === 'dem') return theme === 'dark' ? '#2DD4BF' : '#6366F1';
+    return theme === 'dark' ? '#FDA4AF' : '#78350F';
+  };
+  
+  const getStepIcon = (type: string) => {
+    if (type === 'ngay') return "sunny";
+    if (type === 'dem') return "moon";
+    return "cafe";
   };
 
   return (
@@ -237,6 +271,96 @@ export default function SettingsScreen() {
         </View>
 
         <View style={{paddingHorizontal: 20}}>
+          
+          <Text style={dynamicStyles.sectionTitle}>📅 CẤU HÌNH LỊCH</Text>
+          <View style={dynamicStyles.card}>
+            {/* CHỌN NGÀY BẮT ĐẦU */}
+            <Text style={{fontSize: 15, padding: 15, color: colors.subText}}>Chọn ngày bắt đầu của bước đầu tiên:</Text>
+            <TouchableOpacity style={{flexDirection: 'row', alignItems: 'center', padding: 15, paddingTop: 0}} onPress={() => openPicker('date')}>
+              <View style={dynamicStyles.iconBox}><Ionicons name="calendar" size={20} color={colors.primary} /></View>
+              <Text style={{flex: 1, fontSize: 16, marginLeft: 15, color: colors.text}}>{format(startDate, 'dd/MM/yyyy')}</Text>
+              <Ionicons name="chevron-forward" size={20} color={colors.subText} />
+            </TouchableOpacity>
+            
+            <View style={dynamicStyles.separator} />
+
+            {/* [MỚI] KHU VỰC TẠO CHU KỲ */}
+            <Text style={{fontSize: 15, padding: 15, paddingBottom: 5, color: colors.subText}}>
+                Mô hình chu kỳ (Tổng: <Text style={{fontWeight:'bold', color: colors.primary}}>{cyclePattern.length}</Text> ngày):
+            </Text>
+            
+            {/* Hiển thị chuỗi chu kỳ hiện tại */}
+            <View style={dynamicStyles.cycleBuilder}>
+                {cyclePattern.map((type, index) => (
+                    <View key={index} style={[dynamicStyles.cycleStep, {backgroundColor: getStepColor(type) + '30', borderWidth: 1, borderColor: getStepColor(type)}]}>
+                        <Ionicons name={getStepIcon(type)} size={20} color={getStepColor(type)} />
+                        <Text style={{fontSize: 8, position: 'absolute', bottom: -15, color: colors.text, fontWeight: 'bold'}}>{index+1}</Text>
+                    </View>
+                ))}
+                {cyclePattern.length === 0 && <Text style={{color: colors.subText, fontStyle: 'italic'}}>Chưa có bước nào</Text>}
+            </View>
+            <View style={{height: 15}}/>
+
+            {/* Các nút thêm bớt */}
+            <View style={dynamicStyles.cycleControl}>
+                <TouchableOpacity style={{alignItems: 'center'}} onPress={() => addToCycle('ngay')}>
+                    <View style={[dynamicStyles.iconBox, {backgroundColor: theme === 'dark' ? '#FDB813' : '#F59E0B'}]}><Ionicons name="sunny" size={20} color="white"/></View>
+                    <Text style={{fontSize: 10, marginTop: 4, color: colors.text, fontWeight: 'bold'}}>+ Ngày</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={{alignItems: 'center'}} onPress={() => addToCycle('dem')}>
+                     <View style={[dynamicStyles.iconBox, {backgroundColor: theme === 'dark' ? '#2DD4BF' : '#6366F1'}]}><Ionicons name="moon" size={20} color="white"/></View>
+                     <Text style={{fontSize: 10, marginTop: 4, color: colors.text, fontWeight: 'bold'}}>+ Đêm</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={{alignItems: 'center'}} onPress={() => addToCycle('nghi')}>
+                     <View style={[dynamicStyles.iconBox, {backgroundColor: theme === 'dark' ? '#FDA4AF' : '#78350F'}]}><Ionicons name="cafe" size={20} color="white"/></View>
+                     <Text style={{fontSize: 10, marginTop: 4, color: colors.text, fontWeight: 'bold'}}>+ Nghỉ</Text>
+                </TouchableOpacity>
+                 <View style={{width: 1, backgroundColor: colors.border}}/>
+                <TouchableOpacity style={{alignItems: 'center'}} onPress={removeLastStep}>
+                     <View style={[dynamicStyles.iconBox, {backgroundColor: '#EF4444'}]}><Ionicons name="backspace" size={20} color="white"/></View>
+                     <Text style={{fontSize: 10, marginTop: 4, color: colors.text}}>Xóa bước</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={{alignItems: 'center'}} onPress={resetCycle}>
+                     <View style={[dynamicStyles.iconBox, {backgroundColor: colors.subText}]}><Ionicons name="refresh" size={20} color="white"/></View>
+                     <Text style={{fontSize: 10, marginTop: 4, color: colors.text}}>Mặc định</Text>
+                </TouchableOpacity>
+            </View>
+          </View>
+
+          <Text style={dynamicStyles.sectionTitle}>🔔 CẤU HÌNH THÔNG BÁO</Text>
+          <View style={dynamicStyles.card}>
+            <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 15}}>
+              <Text style={{fontSize: 15, padding: 0, fontWeight:'bold', color: colors.subText}}>Bật thông báo nhắc nhở:</Text>
+              <Switch value={isNotifEnabled} onValueChange={toggleSwitch} trackColor={{ false: "#E5E7EB", true: colors.primary }} thumbColor={"#fff"} />
+            </View>
+            
+            {isNotifEnabled && (
+              <>
+                <View style={dynamicStyles.separator} />
+                <TouchableOpacity style={{flexDirection: 'row', alignItems: 'center', padding: 15}} onPress={() => openPicker('timeDay')}>
+                  <View style={dynamicStyles.iconBox}><Ionicons name="sunny" size={20} color="#FDB813" /></View>
+                  <Text style={{flex: 1, fontSize: 16, marginLeft: 15, color: colors.text}}>Giờ nhắc Ca Ngày</Text>
+                  <Text style={{fontSize: 16, fontWeight: 'bold', marginRight: 5, color: colors.primary}}>{format(timeDay, 'HH:mm')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={{flexDirection: 'row', alignItems: 'center', padding: 15}} onPress={() => openPicker('timeNight')}>
+                  <View style={dynamicStyles.iconBox}><Ionicons name="moon" size={20} color="#60A5FA" /></View>
+                  <Text style={{flex: 1, fontSize: 16, marginLeft: 15, color: colors.text}}>Giờ nhắc Ca Đêm</Text>
+                  <Text style={{fontSize: 16, fontWeight: 'bold', marginRight: 5, color: colors.primary}}>{format(timeNight, 'HH:mm')}</Text>
+                </TouchableOpacity>
+                 <TouchableOpacity style={{flexDirection: 'row', alignItems: 'center', padding: 15}} onPress={() => openPicker('timeOff')}>
+                  <View style={dynamicStyles.iconBox}><Ionicons name="cafe" size={20} color="#10B981" /></View>
+                  <Text style={{flex: 1, fontSize: 16, marginLeft: 15, color: colors.text}}>Giờ nhắc Ngày Nghỉ</Text>
+                  <Text style={{fontSize: 16, fontWeight: 'bold', marginRight: 5, color: colors.primary}}>{format(timeOff, 'HH:mm')}</Text>
+                </TouchableOpacity>
+                <View style={dynamicStyles.separator} />
+                <TouchableOpacity style={{flexDirection: 'row', alignItems: 'center', padding: 15}} onPress={() => openPicker('timeNormal')}>
+                  <View style={dynamicStyles.iconBox}><Ionicons name="notifications" size={20} color={colors.subText} /></View>
+                  <Text style={{flex: 1, fontSize: 16, marginLeft: 15, color: colors.text}}>Giờ nhắc Mặc định</Text>
+                  <Text style={{fontSize: 16, fontWeight: 'bold', marginRight: 5, color: colors.primary}}>{format(timeNormal, 'HH:mm')}</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
           
           <Text style={dynamicStyles.sectionTitle}>☁️ TÀI KHOẢN & ĐỒNG BỘ</Text>
           <View style={[dynamicStyles.card, {padding: 0, overflow: 'hidden'}]}>
@@ -283,7 +407,7 @@ export default function SettingsScreen() {
              )}
           </View>
 
-          {/* CÁC PHẦN CÀI ĐẶT KHÁC */}
+          {/* GIAO DIỆN */}
           <Text style={dynamicStyles.sectionTitle}>🎨 GIAO DIỆN</Text>
           <View style={dynamicStyles.card}>
             <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 15}}>
@@ -295,47 +419,6 @@ export default function SettingsScreen() {
             </View>
           </View>
         
-          <Text style={dynamicStyles.sectionTitle}>📅 CHU KỲ LÀM VIỆC</Text>
-          <View style={dynamicStyles.card}>
-            <Text style={{fontSize: 15, padding: 15, color: colors.subText}}>Ngày bắt đầu <Text style={{fontWeight: 'bold', color: colors.primary}}>CA NGÀY</Text> đầu tiên:</Text>
-            <TouchableOpacity style={{flexDirection: 'row', alignItems: 'center', padding: 15}} onPress={() => openPicker('date')}>
-              <View style={dynamicStyles.iconBox}><Ionicons name="calendar" size={20} color={colors.primary} /></View>
-              <Text style={{flex: 1, fontSize: 16, marginLeft: 15, color: colors.text}}>{format(startDate, 'dd/MM/yyyy')}</Text>
-              <Ionicons name="chevron-forward" size={20} color={colors.subText} />
-            </TouchableOpacity>
-          </View>
-
-          <Text style={dynamicStyles.sectionTitle}>🔔 CẤU HÌNH THÔNG BÁO</Text>
-          <View style={dynamicStyles.card}>
-            <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 15}}>
-              <Text style={{fontSize: 15, padding: 0, fontWeight:'bold', color: colors.subText}}>Bật thông báo nhắc nhở:</Text>
-              <Switch value={isNotifEnabled} onValueChange={toggleSwitch} trackColor={{ false: "#E5E7EB", true: colors.primary }} thumbColor={"#fff"} />
-            </View>
-            
-            {isNotifEnabled && (
-              <>
-                <View style={dynamicStyles.separator} />
-                <TouchableOpacity style={{flexDirection: 'row', alignItems: 'center', padding: 15}} onPress={() => openPicker('timeDay')}>
-                  <View style={dynamicStyles.iconBox}><Ionicons name="sunny" size={20} color="#FDB813" /></View>
-                  <Text style={{flex: 1, fontSize: 16, marginLeft: 15, color: colors.text}}>Giờ nhắc Ca Ngày</Text>
-                  <Text style={{fontSize: 16, fontWeight: 'bold', marginRight: 5, color: colors.primary}}>{format(timeDay, 'HH:mm')}</Text>
-                </TouchableOpacity>
-                <View style={dynamicStyles.separator} />
-                <TouchableOpacity style={{flexDirection: 'row', alignItems: 'center', padding: 15}} onPress={() => openPicker('timeNight')}>
-                  <View style={dynamicStyles.iconBox}><Ionicons name="moon" size={20} color="#60A5FA" /></View>
-                  <Text style={{flex: 1, fontSize: 16, marginLeft: 15, color: colors.text}}>Giờ nhắc Ca Đêm</Text>
-                  <Text style={{fontSize: 16, fontWeight: 'bold', marginRight: 5, color: colors.primary}}>{format(timeNight, 'HH:mm')}</Text>
-                </TouchableOpacity>
-                <View style={dynamicStyles.separator} />
-                 <TouchableOpacity style={{flexDirection: 'row', alignItems: 'center', padding: 15}} onPress={() => openPicker('timeOff')}>
-                  <View style={dynamicStyles.iconBox}><Ionicons name="cafe" size={20} color="#10B981" /></View>
-                  <Text style={{flex: 1, fontSize: 16, marginLeft: 15, color: colors.text}}>Giờ nhắc Ngày Nghỉ</Text>
-                  <Text style={{fontSize: 16, fontWeight: 'bold', marginRight: 5, color: colors.primary}}>{format(timeOff, 'HH:mm')}</Text>
-                </TouchableOpacity>
-                {/* [ĐÃ XÓA] Mục Giờ mặc định ở đây */}
-              </>
-            )}
-          </View>
         </View>
       </ScrollView>
 
@@ -365,10 +448,7 @@ export default function SettingsScreen() {
       {/* MODAL ĐĂNG NHẬP / ĐĂNG KÝ */}
       <Modal transparent={true} visible={showAuthModal} animationType="slide">
         <TouchableWithoutFeedback onPress={() => setShowAuthModal(false)}>
-           <KeyboardAvoidingView 
-             behavior={Platform.OS === "ios" ? "padding" : "height"} 
-             style={dynamicStyles.modalOverlay}
-           >
+           <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={dynamicStyles.modalOverlay}>
               <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
                 <View style={[dynamicStyles.pickerContainer, {padding: 20}]}>
                   <View style={{flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20}}>
@@ -377,36 +457,14 @@ export default function SettingsScreen() {
                       </Text>
                       <TouchableOpacity onPress={() => setShowAuthModal(false)}><Ionicons name="close" size={24} color={colors.text}/></TouchableOpacity>
                   </View>
-
                   <ScrollView scrollEnabled={false}>
                     <Text style={dynamicStyles.subText}>Email:</Text>
-                    <TextInput 
-                        style={dynamicStyles.authInput} 
-                        placeholder="email@example.com" 
-                        placeholderTextColor={colors.subText}
-                        autoCapitalize="none"
-                        value={email} onChangeText={setEmail}
-                    />
-
+                    <TextInput style={dynamicStyles.authInput} placeholder="email@example.com" placeholderTextColor={colors.subText} autoCapitalize="none" value={email} onChangeText={setEmail} />
                     <Text style={dynamicStyles.subText}>Mật khẩu:</Text>
-                    <TextInput 
-                        style={dynamicStyles.authInput} 
-                        placeholder="******" 
-                        placeholderTextColor={colors.subText}
-                        secureTextEntry
-                        value={password} onChangeText={setPassword}
-                    />
-
-                    <TouchableOpacity style={dynamicStyles.authBtn} onPress={handleAuth}>
-                        <Text style={{color: 'white', fontWeight: 'bold', fontSize: 16}}>
-                          {authMode === 'login' ? 'Đăng Nhập' : 'Đăng Ký Ngay'}
-                        </Text>
-                    </TouchableOpacity>
-
+                    <TextInput style={dynamicStyles.authInput} placeholder="******" placeholderTextColor={colors.subText} secureTextEntry value={password} onChangeText={setPassword} />
+                    <TouchableOpacity style={dynamicStyles.authBtn} onPress={handleAuth}><Text style={{color: 'white', fontWeight: 'bold', fontSize: 16}}>{authMode === 'login' ? 'Đăng Nhập' : 'Đăng Ký Ngay'}</Text></TouchableOpacity>
                     <TouchableOpacity style={{marginTop: 15, alignItems: 'center'}} onPress={() => setAuthMode(authMode==='login'?'register':'login')}>
-                        <Text style={{color: colors.primary}}>
-                          {authMode === 'login' ? 'Chưa có tài khoản? Đăng ký' : 'Đã có tài khoản? Đăng nhập'}
-                        </Text>
+                        <Text style={{color: colors.primary}}>{authMode === 'login' ? 'Chưa có tài khoản? Đăng ký' : 'Đã có tài khoản? Đăng nhập'}</Text>
                     </TouchableOpacity>
                   </ScrollView>
                 </View>
