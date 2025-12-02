@@ -6,10 +6,9 @@ on:
 jobs:
   build-ios:
     runs-on: macos-13
-    # [QUAN TRỌNG] Thiết lập thư mục làm việc mặc định là folder 'ipa'
     defaults:
       run:
-        working-directory: ./ipa 
+        working-directory: ./ipa  # Vẫn giữ cái này vì code anh nằm trong folder ipa
 
     steps:
       - name: Checkout repository
@@ -20,14 +19,14 @@ jobs:
         with:
           node-version: 20
           cache: 'npm'
-          # Chỉ định đường dẫn file package-lock.json để cache hoạt động đúng
-          cache-dependency-path: ipa/package-lock.json 
+          cache-dependency-path: ipa/package-lock.json
 
       - name: Install dependencies
         run: npm install
 
+      # [ĐÃ SỬA] Bỏ --no-interactive đi
       - name: Expo Prebuild
-        run: npx expo prebuild --platform ios --no-interactive --clean
+        run: npx expo prebuild --platform ios --clean
 
       - name: Install Pods
         run: |
@@ -58,5 +57,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: app-unsigned
-          # Upload file từ đúng đường dẫn bên trong folder ipa
           path: ipa/build/MyApp.ipa
