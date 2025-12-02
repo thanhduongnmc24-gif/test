@@ -19,12 +19,6 @@ import { supabase } from '../supabaseConfig';
 // @ts-ignore
 import { Solar } from 'lunar-javascript';
 
-// [WIDGET] Import thư viện chia sẻ dữ liệu
-import SharedGroupPreferences from 'react-native-shared-group-preferences';
-
-// [WIDGET] Key App Group (Phải trùng khớp với file Swift và Plugin)
-const APP_GROUP_KEY = 'group.com.ghichu.widgetdata';
-
 type NoteData = {
   type: 'ngay' | 'dem' | 'nghi' | '';
   noteLines: string[];
@@ -45,6 +39,7 @@ export default function CalendarScreen() {
   const [modalVisible, setModalVisible] = useState(false);
   const [notes, setNotes] = useState<Record<string, NoteData>>({});
   
+  // State lưu chu kỳ tùy chỉnh
   const [cycleStartDate, setCycleStartDate] = useState<Date | null>(null);
   const [cyclePattern, setCyclePattern] = useState<string[]>(['ngay', 'dem', 'nghi']);
 
@@ -60,8 +55,10 @@ export default function CalendarScreen() {
     normal: new Date(new Date().setHours(7,0,0,0)),
   });
 
+  // [AUTO SYNC] State User
   const [user, setUser] = useState<any>(null);
 
+  // 1. Kiểm tra User & Lắng nghe trạng thái App để Auto Sync
   useEffect(() => {
     const checkUser = async () => {
         const { data: { session } } = await supabase.auth.getSession();
@@ -121,6 +118,7 @@ export default function CalendarScreen() {
     }, [])
   );
 
+  // Hàm đồng bộ dữ liệu lên Supabase (Chạy ngầm)
   const syncDataToSupabase = async () => {
     if (!user) return;
     try {
@@ -144,38 +142,6 @@ export default function CalendarScreen() {
         console.log(">> Đã auto-sync lên Supabase thành công!");
     } catch (e) {
         console.log("Lỗi auto-sync:", e);
-    }
-  };
-
-  // [WIDGET] HÀM CẬP NHẬT DỮ LIỆU SANG WIDGET
-  const updateWidgetData = async (date: Date, notesForDay: string[]) => {
-    try {
-      // 1. Tính toán lại thông tin
-      const autoType = calculateAutoShift(date);
-      let shiftName = "NGÀY NGHỈ";
-      let shiftColor = "#6B7280"; // Xám
-      
-      if (autoType === 'ngay') { shiftName = "CA NGÀY"; shiftColor = theme === 'dark' ? "#FDB813" : "#F59E0B"; }
-      else if (autoType === 'dem') { shiftName = "CA ĐÊM"; shiftColor = theme === 'dark' ? "#2DD4BF" : "#6366F1"; }
-      else if (autoType === 'nghi') { shiftName = "NGÀY NGHỈ"; shiftColor = theme === 'dark' ? "#FDA4AF" : "#78350F"; }
-      
-      const lunar = getLunarInfo(date);
-      
-      // 2. Gom dữ liệu (Khớp với Swift)
-      const widgetData = {
-          shiftName: shiftName,
-          shiftColorHex: shiftColor,
-          dateString: format(date, 'dd/MM'),
-          lunarDate: `${lunar.text} AL`,
-          note: notesForDay.join('\n')
-      };
-
-      // 3. Gửi sang App Group
-      await SharedGroupPreferences.setItem('widgetData', widgetData, APP_GROUP_KEY);
-      console.log(">> Đã gửi dữ liệu sang Widget thành công!");
-      
-    } catch (e) {
-      console.log("Lỗi Widget (Có thể do chạy trên Simulator hoặc chưa config App Group):", e);
     }
   };
 
@@ -258,13 +224,8 @@ export default function CalendarScreen() {
       setModalVisible(false);
       try { 
           await AsyncStorage.setItem('CALENDAR_NOTES', JSON.stringify(newNotes));
-          
-          // [WIDGET] Cập nhật dữ liệu cho Widget
-          await updateWidgetData(selectedDate, cleanLines);
-          
-          // [AUTO SYNC] Đồng bộ lên Supabase
+          // [AUTO SYNC] Gọi hàm đồng bộ ngay sau khi lưu
           await syncDataToSupabase();
-          
       } catch (e) {}
     }
   };

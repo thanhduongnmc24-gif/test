@@ -48,8 +48,7 @@
         }
       ],
       "./without-push.js",
-      "expo-web-browser",
-      "./plugins/withWidget"
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,
