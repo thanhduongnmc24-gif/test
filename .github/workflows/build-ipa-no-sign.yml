@@ -19,6 +19,7 @@ jobs:
         with:
           node-version: 20
           cache: 'npm'
+          cache-dependency-path: ipa/package-lock.json
 
       - name: Install dependencies
         run: npm install
@@ -31,27 +32,12 @@ jobs:
           cd ios
           pod install
 
-      # [MỚI] Bước này cực quan trọng để fix lỗi Exit 65
-      - name: Disable Signing in Pods
-        run: |
-          cd ios
-          # Tìm và thay thế tất cả yêu cầu ký trong file cấu hình của Pods thành "NO"
-          find Pods -name "*.pbxproj" -exec sed -i '' 's/CODE_SIGNING_ALLOWED = YES/CODE_SIGNING_ALLOWED = NO/g' {} +
-          find Pods -name "*.pbxproj" -exec sed -i '' 's/CODE_SIGNING_REQUIRED = YES/CODE_SIGNING_REQUIRED = NO/g' {} +
-
       - name: Build Archive (No Signing)
         run: |
           cd ios
-          # Tự động tìm tên Scheme chính xác
-          SCHEME=$(xcodebuild -list -json | tr -d "\n" | sed -E 's/.*"schemes":\["([^"]+)".*/\1/')
+          # [SỬA LỖI] Lấy tên scheme từ tên file workspace
+          SCHEME=$(basename *.xcworkspace .xcworkspace)
           echo "Detected Scheme: $SCHEME"
-          
-          if [ -z "$SCHEME" ]; then
-            echo "Error: Could not detect scheme!"
-            exit 1
-          fi
-          
-          # Build với cờ -quiet để log gọn gàng, dễ tìm lỗi nếu có
           xcodebuild archive \
             -workspace *.xcworkspace \
             -scheme "$SCHEME" \
@@ -63,22 +49,26 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             AD_HOC_CODE_SIGNING_ALLOWED=NO \
             -quiet
+            
+          xcodebuild archive \
+            -workspace *.xcworkspace \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -archivePath ../build/MyApp.xcarchive \
+            -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
 
       - name: Create IPA from Archive
         run: |
           mkdir -p build/Payload
-          cp -R build/MyApp.xcarchive/Products/Applications/*.app build/Payload/
-          
-          # Xóa các thành phần mở rộng gây lỗi khi cài qua ESign
-          echo "Removing Watch & PlugIns (Extensions)..."
-          rm -rf build/Payload/*.app/PlugIns
-          rm -rf build/Payload/*.app/Watch
-          
+          mv build/MyApp.xcarchive/Products/Applications/*.app build/Payload/
           cd build
           zip -r -9 MyApp.ipa Payload
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: ghi-chu-unsigned
+          name: app-unsigned
           path: ipa/build/MyApp.ipa

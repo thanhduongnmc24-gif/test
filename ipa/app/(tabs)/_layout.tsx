@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Platform, AppState, View, Animated, Easing, Text } from 'react-native'; 
+import { Platform, AppState, View, Animated, Easing, Text, TouchableOpacity, Alert, StyleSheet } from 'react-native'; 
 import * as Notifications from 'expo-notifications';
 import * as Speech from 'expo-speech';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as LocalAuthentication from 'expo-local-authentication';
 
 // Import đúng đường dẫn
 import { useTheme } from '../context/ThemeContext';
@@ -15,9 +16,10 @@ export default function TabLayout() {
   const appState = useRef(AppState.currentState);
 
   // --- STATE ---
-  // Chỉ giữ lại state đồng bộ, bỏ state khóa
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error' | 'downloading'>('idle');
   const spinValue = useRef(new Animated.Value(0)).current;
+  const [isLocked, setIsLocked] = useState(true);
+  const [hasBiometrics, setHasBiometrics] = useState(false);
 
   // --- HIỆU ỨNG XOAY ---
   useEffect(() => {
@@ -29,30 +31,50 @@ export default function TabLayout() {
   }, [syncStatus]);
   const spin = spinValue.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
 
-  // --- LOGIC SAO LƯU THÔNG MINH (Giữ nguyên) ---
+  // --- BẢO MẬT (FACEID) ---
+  const authenticate = async () => {
+    try {
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+      if (!hasHardware || !isEnrolled) { setIsLocked(false); return; }
+      setHasBiometrics(true);
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Mở khóa Ghi Chú Riêng Tư',
+        fallbackLabel: 'Dùng mật khẩu máy',
+        disableDeviceFallback: false,
+      });
+      if (result.success) setIsLocked(false);
+    } catch (e) { setIsLocked(false); }
+  };
+
+  // --- [QUAN TRỌNG] LOGIC SAO LƯU THÔNG MINH ---
   const performSmartSync = async (triggerType: 'background' | 'foreground') => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.user) return; 
+      if (!session?.user) return; // Chưa đăng nhập thì thôi
 
       // 1. Kiểm tra xem máy này đã từng Sync thành công lần nào chưa?
       const localLastSync = await AsyncStorage.getItem('LAST_SUCCESS_SYNC');
+      
       console.log(`SmartSync (${triggerType}): Đang kiểm tra... LastSync: ${localLastSync}`);
 
-      const { data: serverData } = await supabase
+      // 2. Lấy dữ liệu trên Server về để soi (chưa ghi đè vội)
+      const { data: serverData, error } = await supabase
         .from('user_sync')
         .select('*')
         .eq('user_id', session.user.id)
         .single();
 
-      // NẾU MÁY MỚI (Chưa sync bao giờ) VÀ SERVER CÓ DỮ LIỆU -> KHÔI PHỤC
+      // NẾU MÁY MỚI (Chưa sync bao giờ) VÀ SERVER CÓ DỮ LIỆU
       if (!localLastSync && serverData && serverData.backup_data) {
-          console.log("⚠️ Máy mới & Server có dữ liệu -> TỰ ĐỘNG KHÔI PHỤC");
+          console.log("⚠️ Phát hiện máy mới & Server có dữ liệu -> TỰ ĐỘNG KHÔI PHỤC (Không ghi đè)");
           setSyncStatus('downloading');
 
+          // Thực hiện Khôi Phục (Restore Logic)
           const backup = serverData.backup_data;
           const pairs: [string, string][] = [];
           const keys = ['QUICK_NOTES', 'CALENDAR_NOTES', 'USER_REMINDERS', 'CYCLE_START_DATE', 'NOTIF_ENABLED', 'GEMINI_API_KEY'];
+          
           keys.forEach(key => {
               if (backup[key] !== undefined && backup[key] !== null) {
                   const valStr = typeof backup[key] === 'string' ? backup[key] : JSON.stringify(backup[key]);
@@ -60,16 +82,26 @@ export default function TabLayout() {
               }
           });
 
-          if (pairs.length > 0) await AsyncStorage.multiSet(pairs);
+          if (pairs.length > 0) {
+              await AsyncStorage.multiSet(pairs);
+          }
+
+          // Đánh dấu là đã Sync xong
           await AsyncStorage.setItem('LAST_SUCCESS_SYNC', new Date().toISOString());
           
           setSyncStatus('success');
           setTimeout(() => setSyncStatus('idle'), 3000);
-          return;
+          
+          // Sau khi tải về xong, nếu đang ở foreground thì có thể Alert nhẹ báo user biết
+          if (triggerType === 'foreground') {
+             // Tùy chọn: Alert.alert("Đồng bộ", "Đã tải dữ liệu từ máy cũ về thành công!");
+          }
+          return; // DỪNG LẠI, KHÔNG CHẠY CODE GHI ĐÈ BÊN DƯỚI
       }
 
-      // 3. SAO LƯU BÌNH THƯỜNG
+      // 3. NẾU LÀ MÁY CŨ (Đã sync rồi) HOẶC SERVER TRỐNG -> TIẾN HÀNH SAO LƯU (UPLOAD)
       setSyncStatus('syncing');
+      
       const keys = ['QUICK_NOTES', 'CALENDAR_NOTES', 'USER_REMINDERS', 'CYCLE_START_DATE', 'NOTIF_ENABLED', 'GEMINI_API_KEY'];
       const stores = await AsyncStorage.multiGet(keys);
       const dataToSave: any = {};
@@ -80,10 +112,14 @@ export default function TabLayout() {
       });
 
       const { error: upsertError } = await supabase.from('user_sync').upsert({ 
-          user_id: session.user.id, backup_data: dataToSave, updated_at: new Date() 
+          user_id: session.user.id, 
+          backup_data: dataToSave,
+          updated_at: new Date() 
       });
 
       if (upsertError) throw upsertError;
+
+      // Cập nhật mốc thời gian
       await AsyncStorage.setItem('LAST_SUCCESS_SYNC', new Date().toISOString());
       setSyncStatus('success');
       setTimeout(() => setSyncStatus('idle'), 3000);
@@ -97,13 +133,16 @@ export default function TabLayout() {
 
   // --- INIT EFFECT ---
   useEffect(() => {
-    // Chạy Sync ngay khi mở app
-    performSmartSync('foreground'); 
+    authenticate();
+    performSmartSync('foreground'); // Chạy ngay khi mở app
 
     const subscription = AppState.addEventListener('change', nextAppState => {
-      // Khi thoát app (xuống background) -> Chạy Sync
       if (appState.current.match(/active/) && nextAppState.match(/inactive|background/)) {
-        performSmartSync('background'); 
+        performSmartSync('background'); // Chạy khi thoát app
+        setIsLocked(true); 
+      }
+      if (appState.current.match(/inactive|background/) && nextAppState === 'active') {
+         setTimeout(() => authenticate(), 100);
       }
       appState.current = nextAppState;
     });
@@ -144,13 +183,21 @@ export default function TabLayout() {
         <Tabs.Screen name="settings" options={{ title: 'Cài đặt', tabBarIcon: ({ color }) => <Ionicons name="settings" size={24} color={color} /> }} />
       </Tabs>
 
-      {/* SYNC INDICATOR (Giữ lại để biết trạng thái sao lưu) */}
-      {syncStatus !== 'idle' && (
-        <View style={{
-            position: 'absolute', top: Platform.OS === 'ios' ? 50 : 40, right: 15, flexDirection: 'row', alignItems: 'center',
-            backgroundColor: colors.card, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, borderWidth: 1, borderColor: colors.border,
-            shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 3.84, elevation: 5, zIndex: 10000 
-        }}>
+      {/* LOCK SCREEN */}
+      {isLocked && (
+        <View style={[styles.lockOverlay, { backgroundColor: colors.bg }]}>
+           <Ionicons name="lock-closed" size={80} color={colors.primary} />
+           <Text style={[styles.lockText, { color: colors.text }]}>Đã Khóa Bảo Mật</Text>
+           <TouchableOpacity onPress={authenticate} style={[styles.unlockBtn, { backgroundColor: colors.primary }]}>
+              <Ionicons name="finger-print" size={24} color="white" />
+              <Text style={{color: 'white', fontWeight: 'bold', marginLeft: 10}}>Mở Khóa</Text>
+           </TouchableOpacity>
+        </View>
+      )}
+
+      {/* SYNC INDICATOR */}
+      {!isLocked && syncStatus !== 'idle' && (
+        <View style={[styles.syncIndicator, { backgroundColor: colors.card, borderColor: colors.border }]}>
            {(syncStatus === 'syncing' || syncStatus === 'downloading') && (
              <Animated.View style={{ transform: [{ rotate: spin }] }}>
                 <Ionicons name={syncStatus === 'downloading' ? "cloud-download" : "sync"} size={16} color={colors.primary} />
@@ -169,3 +216,14 @@ export default function TabLayout() {
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  lockOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 99999, justifyContent: 'center', alignItems: 'center' },
+  lockText: { fontSize: 20, fontWeight: 'bold', marginTop: 20, marginBottom: 40 },
+  unlockBtn: { flexDirection: 'row', paddingHorizontal: 30, paddingVertical: 15, borderRadius: 30, alignItems: 'center' },
+  syncIndicator: {
+    position: 'absolute', top: Platform.OS === 'ios' ? 50 : 40, right: 15, flexDirection: 'row', alignItems: 'center',
+    paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, borderWidth: 1,
+    shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 3.84, elevation: 5, zIndex: 10000 
+  }
+});
