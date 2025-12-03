@@ -38,7 +38,18 @@ jobs:
           # [SỬA LỖI] Lấy tên scheme từ tên file workspace
           SCHEME=$(basename *.xcworkspace .xcworkspace)
           echo "Detected Scheme: $SCHEME"
-          
+          xcodebuild archive \
+            -workspace *.xcworkspace \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -archivePath ../build/MyApp.xcarchive \
+            -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=NO \
+            -quiet
+            
           xcodebuild archive \
             -workspace *.xcworkspace \
             -scheme "$SCHEME" \
