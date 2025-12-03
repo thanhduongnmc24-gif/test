@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { 
   StyleSheet, Text, View, TouchableOpacity, FlatList, Modal, TextInput, 
   Platform, KeyboardAvoidingView, ScrollView, Animated, Keyboard 
@@ -9,6 +9,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../context/ThemeContext';
 import { GestureHandlerRootView, Swipeable, RectButton } from 'react-native-gesture-handler';
 import * as WebBrowser from 'expo-web-browser';
+// [QUAN TRỌNG] Import cái này để biết khi nào tab được focus
+import { useFocusEffect } from 'expo-router';
 
 type QuickNote = {
   id: string;
@@ -25,12 +27,17 @@ export default function NotesScreen() {
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   
-  // [MỚI] State lưu từ khóa tìm kiếm
   const [searchQuery, setSearchQuery] = useState('');
 
   const rowRefs = useRef<Map<string, Swipeable>>(new Map());
 
-  useEffect(() => { loadNotes(); }, []);
+  // [SỬA LỖI] Thay useEffect bằng useFocusEffect
+  // Mỗi khi anh hai chuyển qua tab này, nó sẽ tự chạy lại hàm loadNotes
+  useFocusEffect(
+    useCallback(() => {
+      loadNotes();
+    }, [])
+  );
 
   const loadNotes = async () => {
     try {
@@ -97,7 +104,6 @@ export default function NotesScreen() {
     }
   };
 
-  // [LOGIC MỚI] Lọc ghi chú dựa trên từ khóa tìm kiếm
   const filteredNotes = notes.filter(n => {
     const searchLower = searchQuery.toLowerCase();
     return (
@@ -138,19 +144,13 @@ export default function NotesScreen() {
             <View style={styles.titleSection}>
                {isLink ? (
                   <TouchableOpacity onPress={() => handlePressLink(item.title)} style={{flex: 1}}>
-                      <Text 
-                        numberOfLines={1} 
-                        style={[styles.cardTitle, { color: colors.primary, textDecorationLine: 'underline' }]}
-                      >
+                      <Text numberOfLines={1} style={[styles.cardTitle, { color: colors.primary, textDecorationLine: 'underline' }]}>
                         {item.title} 🔗
                       </Text>
                   </TouchableOpacity>
                ) : (
                   <View style={{flex: 1}}>
-                    <Text 
-                       numberOfLines={1} 
-                       style={[styles.cardTitle, { color: colors.text }]}
-                    >
+                    <Text numberOfLines={1} style={[styles.cardTitle, { color: colors.text }]}>
                        {item.title || '(Không tiêu đề)'}
                     </Text>
                   </View>
@@ -160,11 +160,7 @@ export default function NotesScreen() {
 
             <View style={[styles.divider, {backgroundColor: colors.border}]} />
 
-            <TouchableOpacity 
-               style={styles.contentSection} 
-               activeOpacity={0.7}
-               onPress={() => handleOpenModal(item)}
-            >
+            <TouchableOpacity style={styles.contentSection} activeOpacity={0.7} onPress={() => handleOpenModal(item)}>
                <Text numberOfLines={2} style={{color: colors.subText, fontSize: 14, lineHeight: 20}}>
                   {item.content || 'Chạm vào đây để viết nội dung...'}
                </Text>
@@ -188,7 +184,7 @@ export default function NotesScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* [MỚI] THANH TÌM KIẾM */}
+        {/* THANH TÌM KIẾM */}
         <View style={{paddingHorizontal: 20, marginBottom: 10}}>
             <View style={[styles.searchBar, {backgroundColor: colors.iconBg, borderColor: colors.border}]}>
                 <Ionicons name="search" size={20} color={colors.subText} />
@@ -231,20 +227,10 @@ export default function NotesScreen() {
               
               <ScrollView style={{ flex: 1 }}>
                 <Text style={[styles.label, {color: colors.subText}]}>Tiêu đề (hoặc Link):</Text>
-                <TextInput 
-                    style={[styles.input, {backgroundColor: colors.iconBg, color: colors.text}]} 
-                    placeholder="http://... hoặc Tiêu đề" 
-                    placeholderTextColor={colors.subText} 
-                    value={title} onChangeText={setTitle} 
-                />
+                <TextInput style={[styles.input, {backgroundColor: colors.iconBg, color: colors.text}]} placeholder="http://... hoặc Tiêu đề" placeholderTextColor={colors.subText} value={title} onChangeText={setTitle} />
                 
                 <Text style={[styles.label, {color: colors.subText}]}>Nội dung:</Text>
-                <TextInput 
-                    style={[styles.input, {backgroundColor: colors.iconBg, color: colors.text, height: 200, textAlignVertical:'top'}]} 
-                    placeholder="Chi tiết..." 
-                    placeholderTextColor={colors.subText} 
-                    multiline value={content} onChangeText={setContent} 
-                />
+                <TextInput style={[styles.input, {backgroundColor: colors.iconBg, color: colors.text, height: 200, textAlignVertical:'top'}]} placeholder="Chi tiết..." placeholderTextColor={colors.subText} multiline value={content} onChangeText={setContent} />
               </ScrollView>
               
               <TouchableOpacity onPress={handleSave} style={[styles.saveBtn, {backgroundColor: colors.primary}]}>
@@ -262,35 +248,15 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 15, paddingBottom: 10 },
   headerTitle: { fontSize: 24, fontWeight: 'bold' },
   addBtn: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
-  
-  // [MỚI] Style cho Search Bar
-  searchBar: {
-      flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8,
-      borderRadius: 12, borderWidth: 1, marginBottom: 5
-  },
+  searchBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: 1, marginBottom: 5 },
   searchInput: { flex: 1, marginLeft: 10, fontSize: 15, height: 30 },
-
-  noteWrapper: {
-    marginBottom: 12,
-  },
-  
-  card: { 
-    borderWidth: 1, 
-  },
-  
+  noteWrapper: { marginBottom: 12 },
+  card: { borderWidth: 1 },
   titleSection: { padding: 12, paddingBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   cardTitle: { fontSize: 16, fontWeight: 'bold' },
   divider: { height: 1, width: '100%', opacity: 0.5 },
   contentSection: { padding: 12, paddingTop: 8, minHeight: 60, justifyContent: 'center' },
-
-  deleteAction: { 
-    backgroundColor: '#EF4444', 
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    width: 80, 
-    height: '100%', 
-  },
-  
+  deleteAction: { backgroundColor: '#EF4444', justifyContent: 'center', alignItems: 'center', width: 80, height: '100%' },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   modalContent: { borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, borderWidth: 1, height: '80%', display: 'flex', flexDirection: 'column' },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
