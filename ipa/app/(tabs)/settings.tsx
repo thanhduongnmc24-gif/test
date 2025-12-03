@@ -23,6 +23,9 @@ export default function SettingsScreen() {
   
   // [STATE CHU KỲ]
   const [cyclePattern, setCyclePattern] = useState<string[]>(['ngay', 'dem', 'nghi']);
+  
+  // [MỚI] STATE API KEY
+  const [geminiKey, setGeminiKey] = useState('');
 
   const [pickerMode, setPickerMode] = useState<'none' | 'date' | 'timeDay' | 'timeNight' | 'timeOff'>('none');
   const [tempDate, setTempDate] = useState(new Date());
@@ -61,11 +64,23 @@ export default function SettingsScreen() {
       
       const savedPattern = await AsyncStorage.getItem('WORK_CYCLE_PATTERN');
       if (savedPattern) setCyclePattern(JSON.parse(savedPattern));
+
+      // [MỚI] Load Key
+      const savedKey = await AsyncStorage.getItem('GEMINI_API_KEY');
+      if (savedKey) setGeminiKey(savedKey);
+
     } catch (e) { console.error('Lỗi load settings:', e); }
   };
 
   const saveSettingItem = async (key: string, value: string) => {
       try { await AsyncStorage.setItem(key, value); } catch (e) { console.error(e); }
+  };
+
+  // [MỚI] Lưu Key khi nhập xong
+  const handleSaveKey = async () => {
+      await saveSettingItem('GEMINI_API_KEY', geminiKey);
+      Keyboard.dismiss();
+      Alert.alert("Đã lưu", "Key Gemini đã được cập nhật!");
   };
   
   const toggleSwitch = async () => {
@@ -74,7 +89,7 @@ export default function SettingsScreen() {
       await saveSettingItem('NOTIF_ENABLED', JSON.stringify(newState));
   };
 
-  // --- HÀM XỬ LÝ CHU KỲ (Thêm/Xóa/Reset) ---
+  // --- HÀM XỬ LÝ CHU KỲ ---
   const addToPattern = async (type: string) => {
     const newPattern = [...cyclePattern, type];
     setCyclePattern(newPattern);
@@ -82,10 +97,7 @@ export default function SettingsScreen() {
   };
 
   const removeFromPattern = async (index: number) => {
-    if (cyclePattern.length <= 1) {
-       Alert.alert("Chú ý", "Chu kỳ phải có ít nhất 1 bước chứ đại ca!");
-       return;
-    }
+    if (cyclePattern.length <= 1) { Alert.alert("Chú ý", "Chu kỳ phải có ít nhất 1 bước chứ đại ca!"); return; }
     const newPattern = cyclePattern.filter((_, i) => i !== index);
     setCyclePattern(newPattern);
     await saveSettingItem('WORK_CYCLE_PATTERN', JSON.stringify(newPattern));
@@ -102,7 +114,6 @@ export default function SettingsScreen() {
     ]);
   };
 
-  // --- Helper để lấy Icon/Màu sắc cho đẹp ---
   const getCycleTypeConfig = (type: string) => {
     switch (type) {
       case 'ngay': return { icon: 'sunny', color: '#F59E0B', bg: '#FEF3C7', label: 'Ngày' };
@@ -112,7 +123,7 @@ export default function SettingsScreen() {
     }
   };
 
-  // --- LOGIC AUTH & SYNC (Giữ nguyên) ---
+  // --- LOGIC AUTH & SYNC ---
   const handleAuth = async () => {
     if (!email || !password) { Alert.alert("Thiếu thông tin", "Nhập email và mật khẩu đi đại ca!"); return; }
     try {
@@ -201,8 +212,6 @@ export default function SettingsScreen() {
     modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' as const },
     pickerContainer: { backgroundColor: colors.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingBottom: 30, borderWidth: 1, borderColor: colors.border },
     pickerHeader: { flexDirection: 'row' as const, justifyContent: 'space-between' as const, padding: 15, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.iconBg, borderTopLeftRadius: 20, borderTopRightRadius: 20 },
-    
-    // [STYLE MỚI] Cho các nút thêm chu kỳ
     addCycleBtn: { flex: 1, alignItems: 'center' as const, justifyContent: 'center' as const, paddingVertical: 10, borderRadius: 10, marginHorizontal: 3, borderWidth: 1, borderColor: 'transparent' },
     cycleStepBox: { width: 60, height: 70, borderRadius: 10, alignItems: 'center' as const, justifyContent: 'center' as const, marginRight: 8, borderWidth: 1, borderColor: colors.border, position: 'relative' as const },
     deleteStepBtn: { position: 'absolute' as const, top: -5, right: -5, backgroundColor: '#EF4444', borderRadius: 10, width: 18, height: 18, alignItems: 'center' as const, justifyContent: 'center' as const, zIndex: 10, borderWidth: 1, borderColor: '#fff' }
@@ -214,7 +223,6 @@ export default function SettingsScreen() {
         <View style={{padding: 15, alignItems:'center'}}><Text style={dynamicStyles.headerTitle}>Cài Đặt</Text></View>
         <View style={{paddingHorizontal: 15}}>
           
-          {/* TÀI KHOẢN (Giữ nguyên) */}
           <Text style={dynamicStyles.sectionTitle}>☁️ TÀI KHOẢN & ĐỒNG BỘ</Text>
           <View style={[dynamicStyles.card, {padding: 0, overflow: 'hidden'}]}>
              {!user ? (
@@ -250,12 +258,30 @@ export default function SettingsScreen() {
              )}
           </View>
 
-          {/* [PHẦN MỚI] CẤU HÌNH CHU KỲ (Cải tiến) */}
+          {/* [PHẦN MỚI] CẤU HÌNH API KEY */}
+          <Text style={dynamicStyles.sectionTitle}>🤖 CẤU HÌNH AI (GEMINI)</Text>
+          <View style={dynamicStyles.card}>
+             <View style={{padding: 10}}>
+                <Text style={{color: colors.subText, fontSize: 12, marginBottom: 5}}>Nhập API Key để dùng tính năng Media:</Text>
+                <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                    <TextInput 
+                        style={[dynamicStyles.authInput, {flex: 1, marginBottom: 0, height: 45}]} 
+                        placeholder="AIzaSy..." 
+                        placeholderTextColor={colors.subText} 
+                        value={geminiKey} 
+                        onChangeText={setGeminiKey}
+                        secureTextEntry
+                    />
+                    <TouchableOpacity onPress={handleSaveKey} style={{backgroundColor: colors.primary, padding: 10, borderRadius: 8, marginLeft: 10, height: 45, justifyContent: 'center'}}>
+                         <Ionicons name="save" size={20} color="white" />
+                    </TouchableOpacity>
+                </View>
+             </View>
+          </View>
+
           <Text style={dynamicStyles.sectionTitle}>⚙️ TÙY CHỈNH CHU KỲ</Text>
           <View style={[dynamicStyles.card, {padding: 10}]}>
              <Text style={{fontSize: 12, color: colors.subText, marginBottom: 10}}>Thứ tự các ca làm việc:</Text>
-             
-             {/* Danh sách các bước hiện tại */}
              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{marginBottom: 15, paddingVertical: 5}}>
                 {cyclePattern.map((item, index) => {
                     const cfg = getCycleTypeConfig(item);
@@ -264,8 +290,6 @@ export default function SettingsScreen() {
                             <Text style={{fontSize: 10, fontWeight: 'bold', color: cfg.color, position: 'absolute', top: 3, left: 5}}>{index + 1}</Text>
                             <Ionicons name={cfg.icon as any} size={24} color={cfg.color} />
                             <Text style={{fontSize: 10, color: cfg.color, fontWeight: 'bold', marginTop: 2}}>{cfg.label}</Text>
-                            
-                            {/* Nút xóa bước (dấu X đỏ) */}
                             <TouchableOpacity style={dynamicStyles.deleteStepBtn} onPress={() => removeFromPattern(index)}>
                                 <Ionicons name="close" size={12} color="white" />
                             </TouchableOpacity>
@@ -273,27 +297,20 @@ export default function SettingsScreen() {
                     );
                 })}
              </ScrollView>
-             
-             {/* Các nút Thêm + Reset */}
              <Text style={{fontSize: 12, color: colors.subText, marginBottom: 5}}>Thêm bước tiếp theo:</Text>
              <View style={{flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10}}>
                 <TouchableOpacity style={[dynamicStyles.addCycleBtn, {backgroundColor: '#FEF3C7'}]} onPress={() => addToPattern('ngay')}>
-                    <Ionicons name="sunny" size={24} color="#F59E0B" />
-                    <Text style={{fontSize: 11, fontWeight:'bold', color: '#B45309', marginTop: 2}}>+ Ngày</Text>
+                    <Ionicons name="sunny" size={24} color="#F59E0B" /><Text style={{fontSize: 11, fontWeight:'bold', color: '#B45309', marginTop: 2}}>+ Ngày</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={[dynamicStyles.addCycleBtn, {backgroundColor: '#E0E7FF'}]} onPress={() => addToPattern('dem')}>
-                    <Ionicons name="moon" size={24} color="#6366F1" />
-                    <Text style={{fontSize: 11, fontWeight:'bold', color: '#4338CA', marginTop: 2}}>+ Đêm</Text>
+                    <Ionicons name="moon" size={24} color="#6366F1" /><Text style={{fontSize: 11, fontWeight:'bold', color: '#4338CA', marginTop: 2}}>+ Đêm</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={[dynamicStyles.addCycleBtn, {backgroundColor: '#D1FAE5'}]} onPress={() => addToPattern('nghi')}>
-                    <Ionicons name="cafe" size={24} color="#10B981" />
-                    <Text style={{fontSize: 11, fontWeight:'bold', color: '#065F46', marginTop: 2}}>+ Nghỉ</Text>
+                    <Ionicons name="cafe" size={24} color="#10B981" /><Text style={{fontSize: 11, fontWeight:'bold', color: '#065F46', marginTop: 2}}>+ Nghỉ</Text>
                 </TouchableOpacity>
              </View>
-
              <TouchableOpacity onPress={resetPattern} style={{flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 8, backgroundColor: colors.iconBg, borderRadius: 8}}>
-                 <Ionicons name="refresh" size={16} color={colors.text} />
-                 <Text style={{color: colors.text, fontSize: 12, fontWeight: 'bold', marginLeft: 5}}>Về mặc định (Ngày - Đêm - Nghỉ)</Text>
+                 <Ionicons name="refresh" size={16} color={colors.text} /><Text style={{color: colors.text, fontSize: 12, fontWeight: 'bold', marginLeft: 5}}>Về mặc định (Ngày - Đêm - Nghỉ)</Text>
              </TouchableOpacity>
           </View>
 
@@ -307,7 +324,6 @@ export default function SettingsScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* GIAO DIỆN & THÔNG BÁO (Giữ nguyên) */}
           <Text style={dynamicStyles.sectionTitle}>🎨 GIAO DIỆN</Text>
           <View style={dynamicStyles.card}>
             <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 10}}>
@@ -351,7 +367,6 @@ export default function SettingsScreen() {
         </View>
       </ScrollView>
 
-      {/* MODAL PICKER & AUTH */}
       <Modal transparent={true} visible={pickerMode !== 'none'} animationType="slide">
         <View style={dynamicStyles.modalOverlay}>
           <View style={dynamicStyles.pickerContainer}>
