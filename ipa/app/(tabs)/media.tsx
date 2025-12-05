@@ -62,7 +62,7 @@ export default function MediaScreen() {
   const [songResult, setSongResult] = useState<SongData | null>(null);
   const [musicMode, setMusicMode] = useState<'welcome' | 'topic' | 'input'>('welcome');
   
-  // State cho các tính năng mở rộng (Studio)
+  // State Studio
   const [extendedContent, setExtendedContent] = useState<string | null>(null);
   const [extendedTitle, setExtendedTitle] = useState('');
   const [isExtendedLoading, setIsExtendedLoading] = useState(false);
@@ -156,8 +156,7 @@ export default function MediaScreen() {
       if (text) type === 'image' ? setImageResult(text) : setTitleResult(text);
   };
 
-  // ==================== MUSIC LOGIC (FULL) ====================
-  
+  // --- MUSIC LOGIC ---
   const predefinedTopics = [
       { title: "Tiếng Mưa Mái Tôn", icon: "rainy", genre: "Lofi / Acoustic", prompt: "Ngày mưa bão, ấm áp trong nhà, tiếng mưa ồn ào nhưng bình yên.", chord: "Cmaj7 - Am7 - Fmaj7 - G7" },
       { title: "Đôi Giày Cũ", icon: "walk", genre: "Ballad / Country", prompt: "Đôi giày mòn gót của cha, hành trình vất vả và tình yêu thầm lặng.", chord: "G - D/F# - Em - C" },
@@ -195,12 +194,10 @@ export default function MediaScreen() {
       if (!currentTopic) return;
       setIsGenerating(true);
       setExtendedContent(null);
-      
       const query = `Act as a professional songwriter. Write a full song in Vietnamese based on:
       - Title: "${currentTopic.title}"
       - Genre: ${currentTopic.genre}
       - Idea: ${currentTopic.prompt}
-      
       Return JSON ONLY:
       {
         "song_title": "Tên bài",
@@ -211,7 +208,6 @@ export default function MediaScreen() {
         "song_abc_notation": "Valid simple ABC Notation string for melody (X:1...)",
         "song_lyrics": "Lyrics with [Chords] inline. Use <br> for new lines."
       }`;
-
       const text = await callGeminiRaw(query);
       setIsGenerating(false);
       if (text) {
@@ -231,42 +227,20 @@ export default function MediaScreen() {
       }
   };
 
-  // --- EXTENDED FEATURES (STUDIO) ---
   const generateExtendedContent = async (type: 'arrange' | 'translate' | 'art' | 'critic' | 'mv' | 'theory') => {
       if (!songResult || !currentTopic) return;
       setIsExtendedLoading(true);
       setExtendedContent(null);
-
       let query = '';
       let title = '';
-
       switch (type) {
-          case 'arrange':
-              title = "Gợi ý Hòa âm";
-              query = `Analyze song "${songResult.song_title}" (${songResult.song_genre}). Provide a short music arrangement guide in Vietnamese. Use bullet points.`;
-              break;
-          case 'translate':
-              title = "Dịch sang Tiếng Anh";
-              query = `Translate lyrics of "${songResult.song_title}" to English (Singable). Return lyrics only.`;
-              break;
-          case 'art':
-              title = "Prompt Ảnh Bìa";
-              query = `Create a high-quality Midjourney prompt for album cover of "${songResult.song_title}" (${songResult.song_genre}). Return Prompt only (English).`;
-              break;
-          case 'critic':
-              title = "Góc Phê Bình";
-              query = `Review song "${songResult.song_title}". Give Star Rating (1-5). Write a witty comment (Vietnamese). Recommend 3 similar artists.`;
-              break;
-          case 'mv':
-              title = "Kịch Bản MV";
-              query = `Create a short MV script for "${songResult.song_title}". Describe 3 key scenes. Vietnamese.`;
-              break;
-          case 'theory':
-              title = "Giải Mã Nhạc Lý";
-              query = `Explain the chord progression/style of "${songResult.song_title}" simply for beginners. Vietnamese.`;
-              break;
+          case 'arrange': title = "Gợi ý Hòa âm"; query = `Analyze song "${songResult.song_title}" (${songResult.song_genre}). Provide a short music arrangement guide in Vietnamese. Use bullet points.`; break;
+          case 'translate': title = "Dịch sang Tiếng Anh"; query = `Translate lyrics of "${songResult.song_title}" to English (Singable). Return lyrics only.`; break;
+          case 'art': title = "Prompt Ảnh Bìa"; query = `Create a high-quality Midjourney prompt for album cover of "${songResult.song_title}" (${songResult.song_genre}). Return Prompt only (English).`; break;
+          case 'critic': title = "Góc Phê Bình"; query = `Review song "${songResult.song_title}". Give Star Rating (1-5). Write a witty comment (Vietnamese). Recommend 3 similar artists.`; break;
+          case 'mv': title = "Kịch Bản MV"; query = `Create a short MV script for "${songResult.song_title}". Describe 3 key scenes. Vietnamese.`; break;
+          case 'theory': title = "Giải Mã Nhạc Lý"; query = `Explain the chord progression/style of "${songResult.song_title}" simply for beginners. Vietnamese.`; break;
       }
-
       setExtendedTitle(title);
       const text = await callGeminiRaw(query);
       setIsExtendedLoading(false);
@@ -282,36 +256,19 @@ export default function MediaScreen() {
     input: { backgroundColor: colors.iconBg, color: colors.text, borderRadius: 10, padding: 12, borderWidth: 1, borderColor: colors.border },
     btnPrimary: { backgroundColor: colors.primary, padding: 15, borderRadius: 12, alignItems: 'center' as const, marginTop: 20 },
     btnText: { color: '#fff', fontWeight: 'bold' as const, fontSize: 16 },
-    
-    // Tabs
     tabButton: { flex: 1, paddingVertical: 10, alignItems: 'center' as const, borderRadius: 10, borderWidth: 1, borderColor: 'transparent', marginHorizontal: 2 },
     tabButtonActive: { backgroundColor: colors.primary, borderColor: colors.primary },
     tabButtonInactive: { backgroundColor: colors.iconBg, borderColor: colors.border },
     tabText: { fontWeight: 'bold' as const, fontSize: 14 },
-
     resultBox: { backgroundColor: colors.inputBg, padding: 12, borderRadius: 10, marginBottom: 15, borderWidth: 1, borderColor: colors.border },
     charCard: { backgroundColor: colors.card, padding: 10, borderRadius: 8, marginBottom: 8, borderLeftWidth: 3, borderLeftColor: colors.accent, borderWidth: 1, borderColor: colors.border },
-    
     musicCard: { backgroundColor: 'white', borderRadius: 16, overflow: 'hidden' as const, borderWidth: 1, borderColor: '#E0E7FF', marginBottom: 20, shadowColor: "#000", shadowOffset: {width: 0, height: 4}, shadowOpacity: 0.1, shadowRadius: 10, elevation: 5 },
     musicHeader: { backgroundColor: '#4F46E5', padding: 20, alignItems: 'center' as const },
     musicContent: { padding: 20, alignItems: 'center' as const },
     musicTitle: { fontSize: 22, fontWeight: 'bold' as const, color: '#4338CA', marginBottom: 5 },
     chordBadge: { backgroundColor: '#F3F4F6', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, fontSize: 12, fontWeight: 'bold' as const, color: '#374151', marginRight: 5, borderWidth: 1, borderColor: '#E5E7EB' },
-    
-    // Studio Buttons
     studioGrid: { flexDirection: 'row' as const, flexWrap: 'wrap' as const, justifyContent: 'space-between' as const, marginTop: 10 },
-    studioBtn: { 
-        width: '48%' as DimensionValue, // [SỬA LỖI] Ép kiểu DimensionValue cho TypeScript hiểu
-        flexDirection: 'row' as const, 
-        alignItems: 'center' as const, 
-        justifyContent: 'center' as const, 
-        padding: 12, 
-        marginBottom: 10, 
-        borderRadius: 8, 
-        borderWidth: 1, 
-        borderColor: '#E0E7FF', 
-        backgroundColor: '#F9FAFB' 
-    },
+    studioBtn: { width: '48%' as DimensionValue, flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'center' as const, padding: 12, marginBottom: 10, borderRadius: 8, borderWidth: 1, borderColor: '#E0E7FF', backgroundColor: '#F9FAFB' },
     studioBtnText: { fontSize: 11, fontWeight: 'bold' as const, color: '#4F46E5', marginLeft: 5 },
   };
 
@@ -338,152 +295,34 @@ export default function MediaScreen() {
               ))}
           </View>
 
-          {/* === GIAO DIỆN MUSIC (FULL FEATURE) === */}
           {mediaType === 'music' && (
             <View>
                 <View style={dynamicStyles.musicCard}>
-                    <View style={dynamicStyles.musicHeader}>
-                        <Ionicons name="musical-notes" size={40} color="white" style={{opacity: 0.9}} />
-                        <Text style={{color: 'white', fontSize: 20, fontWeight: 'bold', marginTop: 10}}>Cảm Hứng Hôm Nay</Text>
-                        <Text style={{color: '#E0E7FF', fontSize: 12}}>Khơi nguồn sáng tạo cùng AI</Text>
-                    </View>
-
+                    <View style={dynamicStyles.musicHeader}><Ionicons name="musical-notes" size={40} color="white" style={{opacity: 0.9}} /><Text style={{color: 'white', fontSize: 20, fontWeight: 'bold', marginTop: 10}}>Cảm Hứng Hôm Nay</Text><Text style={{color: '#E0E7FF', fontSize: 12}}>Khơi nguồn sáng tạo cùng AI</Text></View>
                     <View style={dynamicStyles.musicContent}>
-                        {/* 1. WELCOME MODE */}
                         {musicMode === 'welcome' && (
-                            <View style={{alignItems: 'center', width: '100%'}}>
-                                <Ionicons name="bulb" size={50} color="#FACC15" style={{marginBottom: 10}} />
-                                <Text style={{color: '#4B5563', fontWeight: '600', fontSize: 16}}>Bạn đang bí ý tưởng?</Text>
-                                <Text style={{color: '#9CA3AF', fontSize: 13, marginBottom: 20, textAlign: 'center'}}>Chọn ngẫu nhiên hoặc nhập ý tưởng riêng.</Text>
-                                <View style={{flexDirection: 'row', gap: 10, width: '100%'}}>
-                                    <TouchableOpacity onPress={handleRandomTopic} style={{flex: 1, backgroundColor: '#E0E7FF', padding: 12, borderRadius: 8, alignItems: 'center', flexDirection: 'row', justifyContent: 'center'}}>
-                                        <Ionicons name="shuffle" size={16} color="#4338CA" style={{marginRight: 5}} />
-                                        <Text style={{color: '#4338CA', fontWeight: 'bold'}}>Ngẫu nhiên</Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity onPress={() => setMusicMode('input')} style={{flex: 1, backgroundColor: '#4F46E5', padding: 12, borderRadius: 8, alignItems: 'center', flexDirection: 'row', justifyContent: 'center'}}>
-                                        <Ionicons name="create" size={16} color="white" style={{marginRight: 5}} />
-                                        <Text style={{color: 'white', fontWeight: 'bold'}}>Tự nhập</Text>
-                                    </TouchableOpacity>
-                                </View>
-                            </View>
+                            <View style={{alignItems: 'center', width: '100%'}}><Ionicons name="bulb" size={50} color="#FACC15" style={{marginBottom: 10}} /><Text style={{color: '#4B5563', fontWeight: '600', fontSize: 16}}>Bạn đang bí ý tưởng?</Text><Text style={{color: '#9CA3AF', fontSize: 13, marginBottom: 20, textAlign: 'center'}}>Chọn ngẫu nhiên hoặc nhập ý tưởng riêng.</Text><View style={{flexDirection: 'row', gap: 10, width: '100%'}}><TouchableOpacity onPress={handleRandomTopic} style={{flex: 1, backgroundColor: '#E0E7FF', padding: 12, borderRadius: 8, alignItems: 'center', flexDirection: 'row', justifyContent: 'center'}}><Ionicons name="shuffle" size={16} color="#4338CA" style={{marginRight: 5}} /><Text style={{color: '#4338CA', fontWeight: 'bold'}}>Ngẫu nhiên</Text></TouchableOpacity><TouchableOpacity onPress={() => setMusicMode('input')} style={{flex: 1, backgroundColor: '#4F46E5', padding: 12, borderRadius: 8, alignItems: 'center', flexDirection: 'row', justifyContent: 'center'}}><Ionicons name="create" size={16} color="white" style={{marginRight: 5}} /><Text style={{color: 'white', fontWeight: 'bold'}}>Tự nhập</Text></TouchableOpacity></View></View>
                         )}
-
-                        {/* 2. INPUT MODE */}
                         {musicMode === 'input' && (
-                            <View style={{width: '100%'}}>
-                                <Text style={{fontWeight: 'bold', color: '#374151', marginBottom: 5}}>Ý tưởng sơ khai:</Text>
-                                <TextInput style={[dynamicStyles.input, {height: 80, textAlignVertical: 'top', backgroundColor: '#F9FAFB'}]} placeholder="Ví dụ: Mèo phi hành gia nhớ nhà..." placeholderTextColor="#9CA3AF" multiline value={musicInput} onChangeText={setMusicInput}/>
-                                <TouchableOpacity onPress={handleCustomMusicTopic} disabled={isGenerating} style={{backgroundColor: '#4F46E5', padding: 12, borderRadius: 8, alignItems: 'center', marginTop: 10}}>
-                                    {isGenerating ? <ActivityIndicator color="white"/> : <Text style={{color: 'white', fontWeight: 'bold'}}>✨ Tạo Chủ Đề</Text>}
-                                </TouchableOpacity>
-                                <TouchableOpacity onPress={() => setMusicMode('welcome')} style={{marginTop: 10, alignItems: 'center'}}><Text style={{color: '#6B7280'}}>Hủy</Text></TouchableOpacity>
-                            </View>
+                            <View style={{width: '100%'}}><Text style={{fontWeight: 'bold', color: '#374151', marginBottom: 5}}>Ý tưởng sơ khai:</Text><TextInput style={[dynamicStyles.input, {height: 80, textAlignVertical: 'top', backgroundColor: '#F9FAFB'}]} placeholder="Ví dụ: Mèo phi hành gia nhớ nhà..." placeholderTextColor="#9CA3AF" multiline value={musicInput} onChangeText={setMusicInput}/><TouchableOpacity onPress={handleCustomMusicTopic} disabled={isGenerating} style={{backgroundColor: '#4F46E5', padding: 12, borderRadius: 8, alignItems: 'center', marginTop: 10}}>{isGenerating ? <ActivityIndicator color="white"/> : <Text style={{color: 'white', fontWeight: 'bold'}}>✨ Tạo Chủ Đề</Text>}</TouchableOpacity><TouchableOpacity onPress={() => setMusicMode('welcome')} style={{marginTop: 10, alignItems: 'center'}}><Text style={{color: '#6B7280'}}>Hủy</Text></TouchableOpacity></View>
                         )}
-
-                        {/* 3. TOPIC DISPLAY MODE */}
                         {musicMode === 'topic' && currentTopic && (
-                            <View style={{width: '100%'}}>
-                                <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15, borderBottomWidth: 1, borderBottomColor: '#F3F4F6', paddingBottom: 10}}>
-                                    <Text style={dynamicStyles.musicTitle}>{currentTopic.title}</Text>
-                                    <View style={{width: 40, height: 40, backgroundColor: '#EEF2FF', borderRadius: 20, alignItems: 'center', justifyContent: 'center'}}>
-                                        <Ionicons name={(currentTopic.icon || 'musical-notes') as any} size={20} color="#6366F1" />
-                                    </View>
-                                </View>
-                                <View style={{marginBottom: 10}}>
-                                    <Text style={{fontSize: 10, fontWeight: 'bold', color: '#6B7280', textTransform: 'uppercase'}}>Thể loại</Text>
-                                    <Text style={{fontSize: 16, color: '#4F46E5', fontWeight: 'bold'}}>{currentTopic.genre}</Text>
-                                </View>
-                                <View style={{backgroundColor: '#EEF2FF', padding: 12, borderRadius: 8, marginBottom: 10}}>
-                                    <Text style={{fontSize: 10, fontWeight: 'bold', color: '#6B7280', textTransform: 'uppercase'}}>Ý tưởng chủ đạo</Text>
-                                    <Text style={{fontSize: 13, color: '#374151', fontStyle: 'italic', marginTop: 2}}>"{currentTopic.prompt}"</Text>
-                                </View>
-                                <View>
-                                    <Text style={{fontSize: 10, fontWeight: 'bold', color: '#6B7280', textTransform: 'uppercase', marginBottom: 5}}>Vòng hợp âm gợi ý</Text>
-                                    <View style={{flexDirection: 'row', flexWrap: 'wrap'}}>
-                                        {currentTopic.chord.split('-').map((c, i) => (<Text key={i} style={dynamicStyles.chordBadge}>{c.trim()}</Text>))}
-                                    </View>
-                                </View>
-                                <TouchableOpacity onPress={composeFullSong} disabled={isGenerating} style={{backgroundColor: 'transparent', borderWidth: 1, borderColor: '#4F46E5', padding: 12, borderRadius: 25, alignItems: 'center', marginTop: 20, flexDirection: 'row', justifyContent: 'center'}}>
-                                     {isGenerating ? <ActivityIndicator color="#4F46E5"/> : (
-                                         <>
-                                            <Ionicons name="sparkles" size={16} color="#FBBF24" style={{marginRight: 5}} />
-                                            <Text style={{color: '#4F46E5', fontWeight: 'bold'}}>Viết Nhạc & Lời (AI)</Text>
-                                         </>
-                                     )}
-                                </TouchableOpacity>
-                                <TouchableOpacity onPress={() => setMusicMode('welcome')} style={{marginTop: 10, alignItems: 'center'}}><Text style={{color: '#6B7280', fontSize: 12}}>Chọn chủ đề khác</Text></TouchableOpacity>
-                            </View>
+                            <View style={{width: '100%'}}><View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15, borderBottomWidth: 1, borderBottomColor: '#F3F4F6', paddingBottom: 10}}><Text style={dynamicStyles.musicTitle}>{currentTopic.title}</Text><View style={{width: 40, height: 40, backgroundColor: '#EEF2FF', borderRadius: 20, alignItems: 'center', justifyContent: 'center'}}><Ionicons name={(currentTopic.icon || 'musical-notes') as any} size={20} color="#6366F1" /></View></View><View style={{marginBottom: 10}}><Text style={{fontSize: 10, fontWeight: 'bold', color: '#6B7280', textTransform: 'uppercase'}}>Thể loại</Text><Text style={{fontSize: 16, color: '#4F46E5', fontWeight: 'bold'}}>{currentTopic.genre}</Text></View><View style={{backgroundColor: '#EEF2FF', padding: 12, borderRadius: 8, marginBottom: 10}}><Text style={{fontSize: 10, fontWeight: 'bold', color: '#6B7280', textTransform: 'uppercase'}}>Ý tưởng chủ đạo</Text><Text style={{fontSize: 13, color: '#374151', fontStyle: 'italic', marginTop: 2}}>"{currentTopic.prompt}"</Text></View><View><Text style={{fontSize: 10, fontWeight: 'bold', color: '#6B7280', textTransform: 'uppercase', marginBottom: 5}}>Vòng hợp âm gợi ý</Text><View style={{flexDirection: 'row', flexWrap: 'wrap'}}>{currentTopic.chord.split('-').map((c, i) => (<Text key={i} style={dynamicStyles.chordBadge}>{c.trim()}</Text>))}</View></View><TouchableOpacity onPress={composeFullSong} disabled={isGenerating} style={{backgroundColor: 'transparent', borderWidth: 1, borderColor: '#4F46E5', padding: 12, borderRadius: 25, alignItems: 'center', marginTop: 20, flexDirection: 'row', justifyContent: 'center'}}>{isGenerating ? <ActivityIndicator color="#4F46E5"/> : (<><Ionicons name="sparkles" size={16} color="#FBBF24" style={{marginRight: 5}} /><Text style={{color: '#4F46E5', fontWeight: 'bold'}}>Viết Nhạc & Lời (AI)</Text></>)}</TouchableOpacity><TouchableOpacity onPress={() => setMusicMode('welcome')} style={{marginTop: 10, alignItems: 'center'}}><Text style={{color: '#6B7280', fontSize: 12}}>Chọn chủ đề khác</Text></TouchableOpacity></View>
                         )}
                     </View>
                 </View>
-
-                {/* 4. SONG RESULT AREA */}
                 {songResult && (
                     <View style={{backgroundColor: '#F8FAFC', padding: 15, borderRadius: 10, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 20}}>
-                         <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 10}}>
-                             <View style={{backgroundColor: '#E9D5FF', padding: 5, borderRadius: 5, marginRight: 8}}><Ionicons name="pencil" size={16} color="#9333EA" /></View>
-                             <Text style={{fontWeight: 'bold', color: '#1F2937', textTransform: 'uppercase'}}>Bản Thảo Hoàn Chỉnh</Text>
-                         </View>
-
-                         {/* Metadata */}
-                         <View style={{backgroundColor: 'white', padding: 10, borderRadius: 8, marginBottom: 10, borderWidth: 1, borderColor: '#F1F5F9'}}>
-                             <Text style={{fontWeight: 'bold', fontSize: 16, color: '#4338CA', marginBottom: 5}}>{songResult.song_title}</Text>
-                             <View style={{flexDirection: 'row', flexWrap: 'wrap', gap: 5}}>
-                                 <Text style={{fontSize: 11, color: '#4B5563'}}>🎵 {songResult.song_genre}</Text>
-                                 <Text style={{fontSize: 11, color: '#4B5563'}}>🥁 {songResult.song_tempo}</Text>
-                                 <Text style={{fontSize: 11, color: '#4B5563'}}>🎤 {songResult.song_vocals}</Text>
-                             </View>
-                         </View>
-
-                         {/* Lyrics */}
-                         <View style={{backgroundColor: 'white', padding: 15, borderRadius: 8, borderWidth: 1, borderColor: '#F1F5F9'}}>
-                             <View style={{flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5}}>
-                                 <Text style={{fontSize: 10, fontWeight: 'bold', color: '#9CA3AF', textTransform: 'uppercase'}}>Lời & Hợp âm</Text>
-                                 <TouchableOpacity onPress={() => copyToClipboard(songResult.song_lyrics.replace(/<br>/g, '\n'))}><Text style={{fontSize: 10, color: '#4F46E5', fontWeight: 'bold'}}>Copy</Text></TouchableOpacity>
-                             </View>
-                             <Text style={{fontSize: 13, color: '#374151', lineHeight: 22}}>{songResult.song_lyrics.split('<br>').map((line, i) => (<Text key={i}>{line}{'\n'}</Text>))}</Text>
-                         </View>
-
-                         {/* ABC Notation */}
-                         {songResult.song_abc_notation && (
-                             <View style={{marginTop: 10, padding: 10, backgroundColor: '#F0FDF4', borderRadius: 8, borderWidth: 1, borderColor: '#BBF7D0'}}>
-                                 <Text style={{fontSize: 10, fontWeight: 'bold', color: '#166534', marginBottom: 5}}>SHEET NHẠC (ABC NOTATION)</Text>
-                                 <Text style={{fontFamily: 'monospace', fontSize: 10, color: '#15803D'}}>{songResult.song_abc_notation}</Text>
-                                 <TouchableOpacity onPress={() => copyToClipboard(songResult.song_abc_notation)} style={{marginTop: 5}}><Text style={{fontSize: 10, color: '#16A34A', fontWeight: 'bold'}}>Copy mã này dán vào abcjs.net</Text></TouchableOpacity>
-                             </View>
-                         )}
-
-                         {/* --- STUDIO EXTENDED TOOLS --- */}
-                         <View style={{marginTop: 20, paddingTop: 15, borderTopWidth: 1, borderTopColor: '#E2E8F0', borderStyle: 'dashed'}}>
-                             <Text style={{textAlign: 'center', fontSize: 12, fontWeight: 'bold', color: '#64748B', marginBottom: 10, textTransform: 'uppercase'}}>✨ Studio Sáng Tạo AI</Text>
-                             <View style={dynamicStyles.studioGrid}>
-                                 <TouchableOpacity onPress={() => generateExtendedContent('arrange')} style={dynamicStyles.studioBtn}><Ionicons name="options" size={16} color="#EC4899" /><Text style={dynamicStyles.studioBtnText}>Hòa Âm</Text></TouchableOpacity>
-                                 <TouchableOpacity onPress={() => generateExtendedContent('translate')} style={dynamicStyles.studioBtn}><Ionicons name="language" size={16} color="#3B82F6" /><Text style={dynamicStyles.studioBtnText}>Dịch Anh</Text></TouchableOpacity>
-                                 <TouchableOpacity onPress={() => generateExtendedContent('art')} style={dynamicStyles.studioBtn}><Ionicons name="image" size={16} color="#10B981" /><Text style={dynamicStyles.studioBtnText}>Ảnh Bìa</Text></TouchableOpacity>
-                                 <TouchableOpacity onPress={() => generateExtendedContent('critic')} style={dynamicStyles.studioBtn}><Ionicons name="star" size={16} color="#F59E0B" /><Text style={dynamicStyles.studioBtnText}>Phê Bình</Text></TouchableOpacity>
-                                 <TouchableOpacity onPress={() => generateExtendedContent('mv')} style={dynamicStyles.studioBtn}><Ionicons name="videocam" size={16} color="#EF4444" /><Text style={dynamicStyles.studioBtnText}>Kịch Bản</Text></TouchableOpacity>
-                                 <TouchableOpacity onPress={() => generateExtendedContent('theory')} style={dynamicStyles.studioBtn}><Ionicons name="school" size={16} color="#8B5CF6" /><Text style={dynamicStyles.studioBtnText}>Nhạc Lý</Text></TouchableOpacity>
-                             </View>
-
-                             {/* EXTENDED RESULT DISPLAY */}
-                             {isExtendedLoading && <ActivityIndicator color={colors.primary} style={{marginTop: 10}} />}
-                             {extendedContent && (
-                                 <View style={{marginTop: 10, padding: 15, backgroundColor: 'white', borderRadius: 8, borderWidth: 1, borderColor: '#CBD5E1', borderLeftWidth: 4, borderLeftColor: colors.primary}}>
-                                     <View style={{flexDirection:'row', justifyContent:'space-between', marginBottom: 5}}>
-                                         <Text style={{fontWeight: 'bold', color: colors.primary}}>{extendedTitle}</Text>
-                                         <TouchableOpacity onPress={() => setExtendedContent(null)}><Ionicons name="close" size={16} color="#94A3B8"/></TouchableOpacity>
-                                     </View>
-                                     <Text style={{color: '#334155', fontSize: 13, lineHeight: 20}}>{extendedContent}</Text>
-                                     <TouchableOpacity onPress={() => copyToClipboard(extendedContent)} style={{marginTop: 10}}><Text style={{fontSize: 11, fontWeight:'bold', color: colors.primary}}>Copy nội dung</Text></TouchableOpacity>
-                                 </View>
-                             )}
-                         </View>
+                         <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 10}}><View style={{backgroundColor: '#E9D5FF', padding: 5, borderRadius: 5, marginRight: 8}}><Ionicons name="pencil" size={16} color="#9333EA" /></View><Text style={{fontWeight: 'bold', color: '#1F2937', textTransform: 'uppercase'}}>Bản Thảo Hoàn Chỉnh</Text></View>
+                         <View style={{backgroundColor: 'white', padding: 10, borderRadius: 8, marginBottom: 10, borderWidth: 1, borderColor: '#F1F5F9'}}><Text style={{fontWeight: 'bold', fontSize: 16, color: '#4338CA', marginBottom: 5}}>{songResult.song_title}</Text><View style={{flexDirection: 'row', flexWrap: 'wrap', gap: 5}}><Text style={{fontSize: 11, color: '#4B5563'}}>🎵 {songResult.song_genre}</Text><Text style={{fontSize: 11, color: '#4B5563'}}>🥁 {songResult.song_tempo}</Text><Text style={{fontSize: 11, color: '#4B5563'}}>🎤 {songResult.song_vocals}</Text></View></View>
+                         <View style={{backgroundColor: 'white', padding: 15, borderRadius: 8, borderWidth: 1, borderColor: '#F1F5F9'}}><View style={{flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5}}><Text style={{fontSize: 10, fontWeight: 'bold', color: '#9CA3AF', textTransform: 'uppercase'}}>Lời & Hợp âm</Text><TouchableOpacity onPress={() => copyToClipboard(songResult.song_lyrics.replace(/<br>/g, '\n'))}><Text style={{fontSize: 10, color: '#4F46E5', fontWeight: 'bold'}}>Copy</Text></TouchableOpacity></View><Text style={{fontSize: 13, color: '#374151', lineHeight: 22}}>{songResult.song_lyrics.split('<br>').map((line, i) => (<Text key={i}>{line}{'\n'}</Text>))}</Text></View>
+                         {songResult.song_abc_notation && (<View style={{marginTop: 10, padding: 10, backgroundColor: '#F0FDF4', borderRadius: 8, borderWidth: 1, borderColor: '#BBF7D0'}}><Text style={{fontSize: 10, fontWeight: 'bold', color: '#166534', marginBottom: 5}}>SHEET NHẠC (ABC NOTATION)</Text><Text style={{fontFamily: 'monospace', fontSize: 10, color: '#15803D'}}>{songResult.song_abc_notation}</Text><TouchableOpacity onPress={() => copyToClipboard(songResult.song_abc_notation)} style={{marginTop: 5}}><Text style={{fontSize: 10, color: '#16A34A', fontWeight: 'bold'}}>Copy mã này dán vào abcjs.net</Text></TouchableOpacity></View>)}
+                         <View style={{marginTop: 20, paddingTop: 15, borderTopWidth: 1, borderTopColor: '#E2E8F0', borderStyle: 'dashed'}}><Text style={{textAlign: 'center', fontSize: 12, fontWeight: 'bold', color: '#64748B', marginBottom: 10, textTransform: 'uppercase'}}>✨ Studio Sáng Tạo AI</Text><View style={dynamicStyles.studioGrid}><TouchableOpacity onPress={() => generateExtendedContent('arrange')} style={dynamicStyles.studioBtn}><Ionicons name="options" size={16} color="#EC4899" /><Text style={dynamicStyles.studioBtnText}>Hòa Âm</Text></TouchableOpacity><TouchableOpacity onPress={() => generateExtendedContent('translate')} style={dynamicStyles.studioBtn}><Ionicons name="language" size={16} color="#3B82F6" /><Text style={dynamicStyles.studioBtnText}>Dịch Anh</Text></TouchableOpacity><TouchableOpacity onPress={() => generateExtendedContent('art')} style={dynamicStyles.studioBtn}><Ionicons name="image" size={16} color="#10B981" /><Text style={dynamicStyles.studioBtnText}>Ảnh Bìa</Text></TouchableOpacity><TouchableOpacity onPress={() => generateExtendedContent('critic')} style={dynamicStyles.studioBtn}><Ionicons name="star" size={16} color="#F59E0B" /><Text style={dynamicStyles.studioBtnText}>Phê Bình</Text></TouchableOpacity><TouchableOpacity onPress={() => generateExtendedContent('mv')} style={dynamicStyles.studioBtn}><Ionicons name="videocam" size={16} color="#EF4444" /><Text style={dynamicStyles.studioBtnText}>Kịch Bản</Text></TouchableOpacity><TouchableOpacity onPress={() => generateExtendedContent('theory')} style={dynamicStyles.studioBtn}><Ionicons name="school" size={16} color="#8B5CF6" /><Text style={dynamicStyles.studioBtnText}>Nhạc Lý</Text></TouchableOpacity></View>{isExtendedLoading && <ActivityIndicator color={colors.primary} style={{marginTop: 10}} />}{extendedContent && (<View style={{marginTop: 10, padding: 15, backgroundColor: 'white', borderRadius: 8, borderWidth: 1, borderColor: '#CBD5E1', borderLeftWidth: 4, borderLeftColor: colors.primary}}><View style={{flexDirection:'row', justifyContent:'space-between', marginBottom: 5}}><Text style={{fontWeight: 'bold', color: colors.primary}}>{extendedTitle}</Text><TouchableOpacity onPress={() => setExtendedContent(null)}><Ionicons name="close" size={16} color="#94A3B8"/></TouchableOpacity></View><Text style={{color: '#334155', fontSize: 13, lineHeight: 20}}>{extendedContent}</Text><TouchableOpacity onPress={() => copyToClipboard(extendedContent)} style={{marginTop: 10}}><Text style={{fontSize: 11, fontWeight:'bold', color: colors.primary}}>Copy nội dung</Text></TouchableOpacity></View>)}</View>
                     </View>
                 )}
             </View>
           )}
 
-          {/* === VIDEO / IMAGE / TITLE (GIỮ NGUYÊN) === */}
           {mediaType === 'video' && (
              <View>
                  <View style={{flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10}}>
@@ -512,7 +351,20 @@ export default function MediaScreen() {
                             </View>
                         )}
                         <Text style={[dynamicStyles.label, {color: colors.primary}]}>🇺🇸 PROMPT VIDEO:</Text>
-                        <View style={[dynamicStyles.resultBox, {borderColor: colors.primary}]}><Text style={{color: colors.text, fontStyle: 'italic'}}>{videoPromptEn}</Text></View>
+                        
+                        {/* [ĐÃ THÊM LẠI] Nút Copy cho phần Video Prompt */}
+                        <View style={[dynamicStyles.resultBox, {borderColor: colors.primary}]}>
+                            <View style={{flexDirection:'row', justifyContent:'flex-end', marginBottom: 5}}>
+                                <TouchableOpacity onPress={() => copyToClipboard(videoPromptEn)}>
+                                    <View style={{flexDirection:'row', alignItems:'center'}}>
+                                        <Ionicons name="copy" size={16} color={colors.primary} />
+                                        <Text style={{fontSize:12, fontWeight:'bold', color:colors.primary, marginLeft:5}}>COPY</Text>
+                                    </View>
+                                </TouchableOpacity>
+                            </View>
+                            <Text style={{color: colors.text, fontStyle: 'italic'}}>{videoPromptEn}</Text>
+                        </View>
+
                         <Text style={[dynamicStyles.label, {color: colors.success}]}>🇻🇳 NỘI DUNG VIỆT:</Text>
                         <View style={[dynamicStyles.resultBox, {borderColor: colors.success}]}><Text style={{color: colors.text}}>{videoPromptVi}</Text></View>
                     </View>
