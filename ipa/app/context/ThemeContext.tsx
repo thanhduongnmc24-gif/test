@@ -1,71 +1,77 @@
-import React, { createContext, useState, useContext, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import { useColorScheme } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-type ThemeType = 'light' | 'dark';
-
-interface ThemeContextProps {
-  theme: ThemeType;
-  toggleTheme: () => void;
-  colors: any;
-}
-
-const Themes = {
+// Định nghĩa bảng màu
+const themes = {
   light: {
-    bg: '#F3F4F6',       // Xám rất nhạt (nền tổng)
-    card: '#FFFFFF',     // Trắng tinh (nền thẻ)
-    text: '#111827',     // Đen than (dễ đọc hơn đen tuyền)
-    subText: '#6B7280',  // Xám trung tính
-    primary: '#4F46E5',  // Indigo đậm (Màu chủ đạo)
-    accent: '#F59E0B',   // Vàng nghệ (Điểm nhấn)
-    border: '#E5E7EB',   // Viền rất nhạt
-    success: '#10B981',  // Xanh lá
-    error: '#EF4444',    // Đỏ
-    inputBg: '#F9FAFB',
-    tabActive: '#4F46E5',
-    tabInactive: '#9CA3AF'
+    theme: 'light',
+    bg: '#F3F4F6',        // Xám rất nhạt (nền)
+    card: '#FFFFFF',      // Trắng tinh (thẻ)
+    text: '#111827',      // Đen than (chữ chính)
+    subText: '#6B7280',   // Xám vừa (chữ phụ)
+    border: '#E5E7EB',    // Viền nhạt
+    primary: '#2563EB',   // Xanh dương chủ đạo
+    iconBg: '#EFF6FF',    // Nền icon nhạt
+    success: '#10B981',   // Màu xanh lá
+    error: '#EF4444',     // Màu đỏ
+    inputBg: '#F9FAFB'    // Nền ô nhập liệu
   },
   dark: {
-    bg: '#111827',       // Đen than chì (không phải đen thui)
-    card: '#1F2937',     // Xám đậm
-    text: '#F9FAFB',     // Trắng đục
-    subText: '#9CA3AF',  // Xám sáng
-    primary: '#818CF8',  // Indigo sáng
-    accent: '#FBBF24',   // Vàng sáng
-    border: '#374151',   // Viền tối
-    success: '#34D399',
-    error: '#F87171',
-    inputBg: '#111827',
-    tabActive: '#818CF8',
-    tabInactive: '#4B5563'
-  }
+    theme: 'dark',
+    // --- MÀU MỚI ĐÃ CHỈNH SỬA (DỊU MẮT HƠN) ---
+    bg: '#18181B',        // Xám đen (Zinc 900) - Không đen kịt
+    card: '#27272A',      // Xám đậm (Zinc 800) - Nổi bật trên nền
+    text: '#F4F4F5',      // Trắng đục (Zinc 100) - Đọc không chói
+    subText: '#A1A1AA',   // Xám bạc (Zinc 400)
+    border: '#3F3F46',    // Viền xám (Zinc 700)
+    primary: '#60A5FA',   // Xanh dương sáng hơn chút cho nổi trên nền tối
+    iconBg: '#3F3F46',    // Nền icon
+    success: '#34D399',   // Xanh lá sáng
+    error: '#F87171',     // Đỏ sáng
+    inputBg: '#27272A'    // Nền ô nhập liệu trùng màu card
+  },
 };
 
-const ThemeContext = createContext<ThemeContextProps>({
+type ThemeContextType = {
+  theme: 'light' | 'dark';
+  colors: typeof themes.light;
+  toggleTheme: () => void;
+  setTheme: (theme: 'light' | 'dark') => void;
+};
+
+const ThemeContext = createContext<ThemeContextType>({
   theme: 'light',
+  colors: themes.light,
   toggleTheme: () => {},
-  colors: Themes.light,
+  setTheme: () => {},
 });
 
 export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
-  const [theme, setTheme] = useState<ThemeType>('light');
+  const systemScheme = useColorScheme();
+  const [theme, setThemeState] = useState<'light' | 'dark'>(systemScheme === 'dark' ? 'dark' : 'light');
 
-  useEffect(() => { loadTheme(); }, []);
-
-  const loadTheme = async () => {
-    try {
-      const savedTheme = await AsyncStorage.getItem('APP_THEME');
-      if (savedTheme) setTheme(savedTheme as ThemeType);
-    } catch (e) {}
-  };
+  useEffect(() => {
+    AsyncStorage.getItem('APP_THEME').then(savedTheme => {
+      if (savedTheme === 'light' || savedTheme === 'dark') {
+        setThemeState(savedTheme);
+      }
+    });
+  }, []);
 
   const toggleTheme = async () => {
     const newTheme = theme === 'light' ? 'dark' : 'light';
-    setTheme(newTheme);
-    try { await AsyncStorage.setItem('APP_THEME', newTheme); } catch (e) {}
+    setThemeState(newTheme);
+    await AsyncStorage.setItem('APP_THEME', newTheme);
+  };
+
+  const setTheme = async (newTheme: 'light' | 'dark') => {
+    setThemeState(newTheme);
+    await AsyncStorage.setItem('APP_THEME', newTheme);
   };
 
   return (
-    <ThemeContext.Provider value={{ theme, toggleTheme, colors: Themes[theme] }}>
+    <ThemeContext.Provider value={{ theme, colors: themes[theme], toggleTheme, setTheme }}>
       {children}
     </ThemeContext.Provider>
   );
