@@ -434,5 +434,6 @@ export default function SettingsScreen() {
         </TouchableWithoutFeedback>
       </Modal>
     </SafeAreaView>
+    //lolo
   );
 }
