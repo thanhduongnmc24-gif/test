@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   StyleSheet, Text, View, TouchableOpacity, TextInput, Image, 
-  ScrollView, Alert, ActivityIndicator, KeyboardAvoidingView, Platform 
+  ScrollView, Alert, ActivityIndicator, KeyboardAvoidingView, Platform, Linking 
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -17,8 +17,11 @@ export default function SheetsScreen() {
   const { colors } = useTheme();
 
   // --- STATE ---
-  const DEFAULT_URL = 'https://script.google.com/macros/s/AKfycbwmGmcshrvrCsfmqXmj1qlyERulh0CtawveADAMK8rwR4g-Oa5h4NMEo73EiSrIiNcK/exec';
-  const [webhookUrl, setWebhookUrl] = useState(DEFAULT_URL);
+  const DEFAULT_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwmGmcshrvrCsfmqXmj1qlyERulh0CtawveADAMK8rwR4g-Oa5h4NMEo73EiSrIiNcK/exec';
+  
+  const [webhookUrl, setWebhookUrl] = useState(DEFAULT_SCRIPT_URL); // Link Script (Để gửi)
+  const [sheetLink, setSheetLink] = useState(''); // Link Trang tính (Để mở xem)
+  
   const [showConfig, setShowConfig] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
 
@@ -26,16 +29,41 @@ export default function SheetsScreen() {
   const [textList, setTextList] = useState<TextItem[]>([{ id: '1', cell: '', content: '' }]);
   const [imageList, setImageList] = useState<ImageItem[]>([{ id: '1', cell: '', uri: '', base64: null }]);
 
-  // Load URL
+  // Load Cấu hình đã lưu
   useEffect(() => {
-    AsyncStorage.getItem('SHEET_API_URL').then(url => { if(url) setWebhookUrl(url); });
+    const loadSettings = async () => {
+        try {
+            const savedScript = await AsyncStorage.getItem('SHEET_API_URL');
+            if (savedScript) setWebhookUrl(savedScript);
+
+            const savedLink = await AsyncStorage.getItem('GOOGLE_SHEET_LINK');
+            if (savedLink) setSheetLink(savedLink);
+        } catch(e) {}
+    };
+    loadSettings();
   }, []);
 
-  const saveUrl = async () => {
-      await AsyncStorage.setItem('SHEET_API_URL', webhookUrl);
-      setShowConfig(false);
-      Alert.alert("Đã lưu", "Cấu hình đã được lưu!");
+  // Lưu Cấu hình
+  const saveSettings = async () => {
+      try {
+        await AsyncStorage.setItem('SHEET_API_URL', webhookUrl);
+        await AsyncStorage.setItem('GOOGLE_SHEET_LINK', sheetLink);
+        setShowConfig(false);
+        Alert.alert("Đã lưu", "Cấu hình kết nối đã được cập nhật!");
+      } catch (e) {
+        Alert.alert("Lỗi", "Không lưu được cài đặt.");
+      }
   }
+
+  // Mở trang tính Google Sheet
+  const openGoogleSheet = () => {
+      if (sheetLink) {
+          Linking.openURL(sheetLink).catch(err => Alert.alert("Lỗi", "Không mở được link này!"));
+      } else {
+          Alert.alert("Chưa có link", "Anh hai bấm vào bánh răng cài đặt để nhập Link trang tính nhé!");
+          setShowConfig(true);
+      }
+  };
 
   // --- LOGIC TEXT ---
   const addTextItem = () => {
@@ -123,22 +151,18 @@ export default function SheetsScreen() {
       backgroundColor: colors.card, padding: 15, borderRadius: 12, borderWidth: 1, borderColor: colors.border, marginBottom: 15 
     },
     
-    // Hàng tiêu đề của Card (Chứa ô Cell + Nút xóa)
     cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
     
-    // Ô nhập Cell (A1, B2...)
     inputCell: { 
       width: 80, height: 40, borderWidth: 1, borderColor: colors.border, borderRadius: 8, 
       textAlign: 'center', fontWeight: 'bold', color: colors.text, backgroundColor: colors.inputBg, fontSize: 16
     },
     
-    // Ô nhập Nội dung (TO RA NHƯ ANH MUỐN)
     inputContentLarge: { 
-      width: '100%', height: 100, // Cao 100px tha hồ viết
+      width: '100%', height: 100, 
       borderWidth: 1, borderColor: colors.border, borderRadius: 8, 
       padding: 12, color: colors.text, backgroundColor: colors.inputBg, 
-      textAlignVertical: 'top', // Chữ bắt đầu từ trên cùng
-      fontSize: 16
+      textAlignVertical: 'top', fontSize: 16
     },
     
     addBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 12, borderStyle: 'dashed', borderWidth: 1, borderColor: colors.subText, borderRadius: 10, marginTop: 5 },
@@ -147,6 +171,17 @@ export default function SheetsScreen() {
       paddingVertical: 12, borderRadius: 10, marginHorizontal: 20, marginBottom: 10,
       alignItems: 'center', flexDirection: 'row', justifyContent: 'center',
       shadowColor: "#000", shadowOffset: {width: 0, height: 2}, shadowOpacity: 0.2, shadowRadius: 3, elevation: 3
+    },
+    
+    // Style cho Config Panel
+    configPanel: {
+        padding: 15, backgroundColor: colors.card, marginHorizontal: 20, marginBottom: 10, 
+        borderRadius: 12, borderWidth: 1, borderColor: colors.primary
+    },
+    configLabel: { color: colors.subText, fontSize: 12, marginBottom: 5, fontWeight: 'bold', marginTop: 10 },
+    configInput: { 
+        color: colors.text, borderWidth: 1, borderColor: colors.border, 
+        padding: 10, borderRadius: 8, backgroundColor: colors.inputBg 
     }
   });
 
@@ -158,15 +193,45 @@ export default function SheetsScreen() {
         <View style={styles.fixedHeader}>
             <View style={styles.headerRow}>
                 <Text style={{fontSize: 24, fontWeight: 'bold', color: colors.text}}>Sheets 📊</Text>
-                <TouchableOpacity onPress={() => setShowConfig(!showConfig)} style={{padding: 5}}>
-                   <Ionicons name={showConfig ? "close-circle" : "settings-sharp"} size={26} color={colors.primary} />
-                </TouchableOpacity>
+                
+                {/* Cụm nút bấm bên phải */}
+                <View style={{flexDirection: 'row', gap: 15}}>
+                    {/* Nút Mở Link Trang Tính */}
+                    <TouchableOpacity onPress={openGoogleSheet} style={{padding: 5}}>
+                       <Ionicons name="open-outline" size={26} color={colors.success} />
+                    </TouchableOpacity>
+
+                    {/* Nút Cài đặt (Bánh răng) */}
+                    <TouchableOpacity onPress={() => setShowConfig(!showConfig)} style={{padding: 5}}>
+                       <Ionicons name={showConfig ? "close-circle" : "settings-sharp"} size={26} color={colors.primary} />
+                    </TouchableOpacity>
+                </View>
             </View>
 
+            {/* PANEL CẤU HÌNH (Ẩn/Hiện) */}
             {showConfig && (
-                <View style={{padding: 10, backgroundColor: colors.card, marginHorizontal: 20, marginBottom: 10, borderRadius: 10, borderWidth: 1, borderColor: colors.border}}>
-                   <TextInput style={{color: colors.text, borderBottomWidth:1, borderColor:colors.border, marginBottom:10}} value={webhookUrl} onChangeText={setWebhookUrl} placeholder="Script URL" />
-                   <TouchableOpacity onPress={saveUrl} style={{alignItems:'center'}}><Text style={{color: colors.primary, fontWeight:'bold'}}>Lưu</Text></TouchableOpacity>
+                <View style={styles.configPanel}>
+                   <Text style={{textAlign:'center', fontWeight:'bold', color: colors.primary, marginBottom: 10}}>CÀI ĐẶT KẾT NỐI</Text>
+                   
+                   <Text style={[styles.configLabel, {marginTop: 0}]}>🔗 Link Script (Apps Script URL):</Text>
+                   <TextInput 
+                        style={styles.configInput} 
+                        value={webhookUrl} onChangeText={setWebhookUrl} 
+                        placeholder="https://script.google.com/..." 
+                        placeholderTextColor={colors.subText}
+                   />
+
+                   <Text style={styles.configLabel}>📄 Link Trang Tính (Google Sheet URL):</Text>
+                   <TextInput 
+                        style={styles.configInput} 
+                        value={sheetLink} onChangeText={setSheetLink} 
+                        placeholder="https://docs.google.com/spreadsheets/..." 
+                        placeholderTextColor={colors.subText}
+                   />
+
+                   <TouchableOpacity onPress={saveSettings} style={{alignItems:'center', backgroundColor: colors.primary, padding: 10, borderRadius: 8, marginTop: 15}}>
+                       <Text style={{color: 'white', fontWeight:'bold'}}>Lưu Cấu Hình</Text>
+                   </TouchableOpacity>
                 </View>
             )}
 
@@ -188,7 +253,6 @@ export default function SheetsScreen() {
           
           {textList.map((item, index) => (
             <View key={item.id} style={styles.itemCard}>
-                {/* Hàng trên: Vị trí ô + Nút xóa */}
                 <View style={styles.cardHeader}>
                     <View style={{flexDirection: 'row', alignItems: 'center'}}>
                         <Text style={{color: colors.subText, marginRight: 8, fontWeight:'bold'}}>Vị trí:</Text>
@@ -203,13 +267,12 @@ export default function SheetsScreen() {
                     </TouchableOpacity>
                 </View>
 
-                {/* Hàng dưới: Ô nhập nội dung to đùng */}
                 <Text style={{color: colors.subText, marginBottom: 5, fontSize: 12}}>Nội dung chi tiết:</Text>
                 <TextInput 
                     style={styles.inputContentLarge} 
                     placeholder="Nhập nội dung dài vào đây..." placeholderTextColor={colors.subText}
                     value={item.content} onChangeText={(val) => updateTextItem(item.id, 'content', val)}
-                    multiline={true} // Cho phép xuống dòng
+                    multiline={true}
                 />
             </View>
           ))}
