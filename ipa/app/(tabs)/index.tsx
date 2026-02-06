@@ -1,14 +1,14 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import { 
   StyleSheet, Text, View, TouchableOpacity, ScrollView, 
-  Modal, TextInput, KeyboardAvoidingView, Platform, Alert, FlatList 
+  Modal, TextInput, KeyboardAvoidingView, Platform, Alert 
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { 
   format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, 
   eachDayOfInterval, addMonths, subMonths, isSameDay, isSameMonth, 
-  differenceInMinutes, parseISO 
+  differenceInMinutes, parseISO, setHours, setMinutes 
 } from 'date-fns';
 import { useFocusEffect } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -36,14 +36,21 @@ export default function CalendarScreen() {
   const [selectedDate, setSelectedDate] = useState<Date | null>(null); 
   const [logs, setLogs] = useState<WorkLog[]>([]);
 
-  // Modal Nhập Liệu
+  // Modal Nhập Liệu & Chỉnh Sửa
   const [modalVisible, setModalVisible] = useState(false);
+  const [editingLogId, setEditingLogId] = useState<string | null>(null); // ID dòng đang sửa
   const [empName, setEmpName] = useState('');
   const [startTime, setStartTime] = useState(new Date());
   const [endTime, setEndTime] = useState(new Date());
+  
+  // State Input Text cho Web
+  const [webStartTime, setWebStartTime] = useState('');
+  const [webEndTime, setWebEndTime] = useState('');
+  
+  // State Picker Mobile
   const [showTimePicker, setShowTimePicker] = useState<'start' | 'end' | null>(null);
 
-  // Modal Chi Tiết Nhân Viên (Mới)
+  // Modal Chi Tiết Tổng Hợp
   const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [selectedEmpDetail, setSelectedEmpDetail] = useState<string | null>(null);
 
@@ -100,61 +107,130 @@ export default function CalendarScreen() {
   // --- HANDLERS ---
   const handlePressDay = (date: Date) => {
     setSelectedDate(date);
-    // Reset form
-    const now = new Date();
-    setStartTime(now);
-    setEndTime(now);
-    setEmpName('');
+    resetForm();
     setModalVisible(true);
   };
 
-  // Xử lý chọn giờ (Fix lỗi không nhập được)
+  const resetForm = () => {
+    const now = new Date();
+    setEmpName('');
+    setEditingLogId(null); // Reset trạng thái sửa
+    setStartTime(now);
+    setEndTime(now);
+    setWebStartTime(format(now, 'HH:mm'));
+    setWebEndTime(format(now, 'HH:mm'));
+  };
+
+  // KHI BẤM VÀO TÊN NHÂN VIÊN ĐỂ SỬA
+  const handleStartEdit = (log: WorkLog) => {
+    setEditingLogId(log.id);
+    setEmpName(log.employeeName);
+    
+    const s = parseISO(log.startTime);
+    const e = parseISO(log.endTime);
+    
+    setStartTime(s);
+    setEndTime(e);
+    setWebStartTime(format(s, 'HH:mm'));
+    setWebEndTime(format(e, 'HH:mm'));
+  };
+
+  // Chọn giờ Mobile
   const onChangeTime = (event: any, selectedDate?: Date) => {
     const type = showTimePicker;
-    if (Platform.OS === 'android') {
-        setShowTimePicker(null); // Tắt picker ngay trên Android sau khi chọn
-    }
-    
+    if(Platform.OS === 'android') setShowTimePicker(null);
     if (selectedDate && type) {
         if (type === 'start') setStartTime(selectedDate);
         else setEndTime(selectedDate);
     }
   };
 
-  const handleAddLog = () => {
-    if (!empName.trim() || !selectedDate) return Alert.alert("Thiếu tên", "Nhập tên nhân viên đi anh hai!");
+  // Parse giờ Web
+  const parseTimeFromText = (timeStr: string, originalDate: Date) => {
+    try {
+        const [hours, minutes] = timeStr.split(':').map(Number);
+        if (!isNaN(hours) && !isNaN(minutes)) {
+            return setMinutes(setHours(originalDate, hours), minutes);
+        }
+    } catch (e) {}
+    return originalDate;
+  };
+
+  // HÀM LƯU (XỬ LÝ CẢ THÊM MỚI VÀ CẬP NHẬT)
+  const handleSaveLog = () => {
+    if (!empName.trim() || !selectedDate) {
+        if (Platform.OS === 'web') alert("Thiếu tên nhân viên kìa anh hai!");
+        else Alert.alert("Thiếu tên", "Nhập tên nhân viên đi anh hai!");
+        return;
+    }
     
-    // Làm tròn giây về 0
-    const s = new Date(startTime); s.setSeconds(0); s.setMilliseconds(0);
-    const e = new Date(endTime); e.setSeconds(0); e.setMilliseconds(0);
+    // Xử lý giờ
+    let finalStart = startTime;
+    let finalEnd = endTime;
+
+    if (Platform.OS === 'web') {
+        finalStart = parseTimeFromText(webStartTime, startTime);
+        finalEnd = parseTimeFromText(webEndTime, endTime);
+    }
+
+    // Làm tròn giây
+    const s = new Date(finalStart); s.setSeconds(0); s.setMilliseconds(0);
+    const e = new Date(finalEnd); e.setSeconds(0); e.setMilliseconds(0);
     
     const duration = calculateDuration(s, e);
     
-    const newLog: WorkLog = {
-      id: Date.now().toString(),
-      date: selectedDate.toISOString(),
-      employeeName: empName.trim(),
-      startTime: s.toISOString(),
-      endTime: e.toISOString(),
-      durationMinutes: duration
-    };
+    if (editingLogId) {
+        // --- LOGIC CẬP NHẬT (UPDATE) ---
+        const updatedLogs = logs.map(log => {
+            if (log.id === editingLogId) {
+                return {
+                    ...log,
+                    employeeName: empName.trim(),
+                    startTime: s.toISOString(),
+                    endTime: e.toISOString(),
+                    durationMinutes: duration
+                };
+            }
+            return log;
+        });
+        saveLogs(updatedLogs);
+        if(Platform.OS === 'web') alert("Đã cập nhật xong!");
+        else Alert.alert("Thành công", "Đã cập nhật thông tin!");
 
-    saveLogs([...logs, newLog]);
-    // Không đóng Modal ngay để còn nhập người khác, chỉ reset tên
-    setEmpName('');
-    Alert.alert("Đã lưu", "Thêm thành công! Nhập tiếp người khác hoặc đóng.");
+    } else {
+        // --- LOGIC THÊM MỚI (ADD) ---
+        const newLog: WorkLog = {
+          id: Date.now().toString(),
+          date: selectedDate.toISOString(),
+          employeeName: empName.trim(),
+          startTime: s.toISOString(),
+          endTime: e.toISOString(),
+          durationMinutes: duration
+        };
+        saveLogs([...logs, newLog]);
+        if(Platform.OS === 'web') alert("Đã lưu thành công!");
+        else Alert.alert("Thành công", "Đã thêm mới!");
+    }
+
+    resetForm(); // Reset form về trạng thái thêm mới
   };
 
   const handleDeleteLog = (id: string) => {
-    Alert.alert("Xác nhận xóa", "Anh có chắc muốn xóa dòng chấm công này không?", [
-      { text: "Hủy", style: "cancel" },
-      { text: "Xóa luôn", style: "destructive", onPress: () => {
-          saveLogs(logs.filter(l => l.id !== id));
-      }}
-    ]);
+    const deleteAction = () => {
+        saveLogs(logs.filter(l => l.id !== id));
+        if (editingLogId === id) resetForm(); // Nếu đang sửa dòng này mà xóa thì reset luôn
+    };
+
+    if (Platform.OS === 'web') {
+        if (confirm("Anh có chắc muốn xóa dòng này không?")) deleteAction();
+    } else {
+        Alert.alert("Xác nhận xóa", "Xóa dòng chấm công này nhé?", [
+          { text: "Hủy", style: "cancel" },
+          { text: "Xóa luôn", style: "destructive", onPress: deleteAction }
+        ]);
+    }
   };
 
-  // Xem chi tiết nhân viên
   const handleViewEmployeeDetail = (name: string) => {
     setSelectedEmpDetail(name);
     setDetailModalVisible(true);
@@ -163,7 +239,6 @@ export default function CalendarScreen() {
   // --- DATA PROCESSING ---
   const getLogsForDay = (date: Date) => logs.filter(l => isSameDay(parseISO(l.date), date));
 
-  // Lọc log cho Modal Chi tiết (Chỉ lấy tháng hiện tại + Tên đã chọn)
   const getDetailLogs = () => {
     if (!selectedEmpDetail) return [];
     return logs.filter(l => 
@@ -176,27 +251,32 @@ export default function CalendarScreen() {
     const monthlyLogs = logs.filter(l => isSameMonth(parseISO(l.date), currentMonth));
 
     if (summaryMode === 'date') {
+        // Sort Date: 1->31
         const grouped: Record<string, WorkLog[]> = {};
         monthlyLogs.forEach(log => {
-            const d = log.date.split('T')[0];
+            const d = format(parseISO(log.date), 'yyyy-MM-dd'); 
             if (!grouped[d]) grouped[d] = [];
             grouped[d].push(log);
         });
-        return Object.keys(grouped).sort().reverse().map(dateStr => ({
-            type: 'date', key: dateStr, date: parseISO(dateStr), items: grouped[dateStr]
+        const sortedKeys = Object.keys(grouped).sort((a, b) => a.localeCompare(b));
+        return sortedKeys.map(dateStr => ({
+            type: 'date',
+            key: dateStr,
+            date: parseISO(dateStr),
+            items: grouped[dateStr].sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
         }));
     } else {
+        // Sort Name: A->Z
         const grouped: Record<string, number> = {};
         monthlyLogs.forEach(log => {
             grouped[log.employeeName] = (grouped[log.employeeName] || 0) + log.durationMinutes;
         });
         return Object.keys(grouped).map(name => ({
             type: 'employee', key: name, name: name, totalMinutes: grouped[name]
-        })).sort((a, b) => b.totalMinutes - a.totalMinutes);
+        })).sort((a, b) => a.name.localeCompare(b.name));
     }
   }, [logs, currentMonth, summaryMode]);
 
-  // Calendar Setup
   const days = eachDayOfInterval({
     start: startOfWeek(startOfMonth(currentMonth), { weekStartsOn: 1 }),
     end: endOfWeek(endOfMonth(currentMonth), { weekStartsOn: 1 })
@@ -258,9 +338,10 @@ export default function CalendarScreen() {
                       <Text style={[styles.lunarText, {color: colors.subText}, lunarInfo.isFirstDay && {color: '#EF4444', fontWeight: 'bold'}]}>{lunarInfo.text}</Text>
                     </View>
                     <View style={{marginTop: 4, flex: 1}}> 
+                      {/* --- PHẦN SỬA ĐỔI: HIỂN THỊ GIỜ BẮT ĐẦU - KẾT THÚC --- */}
                       {dayLogs.slice(0, 3).map((l, i) => (
-                        <Text key={i} numberOfLines={1} style={{fontSize: 8.5, color: colors.primary, marginBottom: 1, fontWeight: 'bold'}}>
-                            {l.employeeName}: {formatDuration(l.durationMinutes)}
+                        <Text key={i} numberOfLines={1} style={{fontSize: 8, color: colors.primary, marginBottom: 1, fontWeight: 'bold'}}>
+                            {l.employeeName}: {format(parseISO(l.startTime), 'HH:mm')}-{format(parseISO(l.endTime), 'HH:mm')}
                         </Text>
                       ))}
                       {dayLogs.length > 3 && <Text style={{fontSize: 8, color: colors.subText}}>...</Text>}
@@ -310,7 +391,6 @@ export default function CalendarScreen() {
                             </View>
                         );
                     } else {
-                        // CHẾ ĐỘ XEM THEO TÊN (Bấm vào để xem chi tiết)
                         return (
                             <TouchableOpacity key={idx} onPress={() => handleViewEmployeeDetail(item.name)}>
                                 <View style={[styles.compactRow, {backgroundColor: colors.card, borderColor: colors.border}]}>
@@ -337,13 +417,13 @@ export default function CalendarScreen() {
           </View>
         </ScrollView>
 
-        {/* MODAL 1: NHẬP CHẤM CÔNG */}
+        {/* MODAL 1: NHẬP & SỬA CHẤM CÔNG */}
         <Modal visible={modalVisible} animationType="fade" transparent>
           <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalOverlay}>
             <View style={[styles.modalContent, {backgroundColor: colors.card, borderColor: colors.border}]}>
               <View style={styles.modalHeader}>
                 <Text style={{fontSize: 18, fontWeight: 'bold', color: colors.text}}>
-                    {selectedDate ? format(selectedDate, 'dd/MM/yyyy') : ''}
+                    {selectedDate ? format(selectedDate, 'dd/MM/yyyy') : ''} {editingLogId ? '(Đang sửa)' : ''}
                 </Text>
                 <TouchableOpacity onPress={() => setModalVisible(false)}><Ionicons name="close" size={24} color={colors.text} /></TouchableOpacity>
               </View>
@@ -354,42 +434,85 @@ export default function CalendarScreen() {
                       style={[styles.inputMulti, {backgroundColor: colors.iconBg, color: colors.text, borderColor: colors.border}]} 
                       placeholder="Nhập tên..." placeholderTextColor={colors.subText}
                       value={empName} onChangeText={setEmpName} 
-                  />
+                 />
 
                  <View style={{flexDirection: 'row', justifyContent: 'space-between', marginTop: 15}}>
-                      <TouchableOpacity onPress={() => setShowTimePicker('start')} style={[styles.timeBox, {borderColor: colors.border, backgroundColor: colors.iconBg}]}>
-                         <Text style={{color: colors.subText, fontSize: 11}}>Giờ vào</Text>
-                         <Text style={{color: colors.primary, fontWeight: 'bold', fontSize: 18}}>{format(startTime, 'HH:mm')}</Text>
-                      </TouchableOpacity>
-                      <View style={{justifyContent:'center'}}><Ionicons name="arrow-forward" color={colors.subText} size={20}/></View>
-                      <TouchableOpacity onPress={() => setShowTimePicker('end')} style={[styles.timeBox, {borderColor: colors.border, backgroundColor: colors.iconBg}]}>
-                         <Text style={{color: colors.subText, fontSize: 11}}>Giờ ra</Text>
-                         <Text style={{color: colors.primary, fontWeight: 'bold', fontSize: 18}}>{format(endTime, 'HH:mm')}</Text>
-                      </TouchableOpacity>
+                      {/* GIAO DIỆN CHỌN GIỜ (WEB VS MOBILE) */}
+                      {Platform.OS === 'web' ? (
+                          <>
+                             <View style={[styles.timeBox, {borderColor: colors.border, backgroundColor: colors.iconBg}]}>
+                                <Text style={{color: colors.subText, fontSize: 11}}>Giờ vào</Text>
+                                <TextInput 
+                                   style={{color: colors.primary, fontWeight: 'bold', fontSize: 18, textAlign: 'center', width: '100%'}}
+                                   value={webStartTime} onChangeText={setWebStartTime}
+                                   placeholder="HH:mm" placeholderTextColor={colors.subText}
+                                />
+                             </View>
+                             <View style={{justifyContent:'center'}}><Ionicons name="arrow-forward" color={colors.subText} size={20}/></View>
+                             <View style={[styles.timeBox, {borderColor: colors.border, backgroundColor: colors.iconBg}]}>
+                                <Text style={{color: colors.subText, fontSize: 11}}>Giờ ra</Text>
+                                <TextInput 
+                                   style={{color: colors.primary, fontWeight: 'bold', fontSize: 18, textAlign: 'center', width: '100%'}}
+                                   value={webEndTime} onChangeText={setWebEndTime}
+                                   placeholder="HH:mm" placeholderTextColor={colors.subText}
+                                />
+                             </View>
+                          </>
+                      ) : (
+                          <>
+                             <TouchableOpacity onPress={() => setShowTimePicker('start')} style={[styles.timeBox, {borderColor: colors.border, backgroundColor: colors.iconBg}]}>
+                                <Text style={{color: colors.subText, fontSize: 11}}>Giờ vào</Text>
+                                <Text style={{color: colors.primary, fontWeight: 'bold', fontSize: 18}}>{format(startTime, 'HH:mm')}</Text>
+                             </TouchableOpacity>
+                             <View style={{justifyContent:'center'}}><Ionicons name="arrow-forward" color={colors.subText} size={20}/></View>
+                             <TouchableOpacity onPress={() => setShowTimePicker('end')} style={[styles.timeBox, {borderColor: colors.border, backgroundColor: colors.iconBg}]}>
+                                <Text style={{color: colors.subText, fontSize: 11}}>Giờ ra</Text>
+                                <Text style={{color: colors.primary, fontWeight: 'bold', fontSize: 18}}>{format(endTime, 'HH:mm')}</Text>
+                             </TouchableOpacity>
+                          </>
+                      )}
                  </View>
                  
-                 <TouchableOpacity style={[styles.saveBtn, {backgroundColor: colors.primary}]} onPress={handleAddLog}>
-                    <Text style={{color: 'white', fontWeight: 'bold'}}>Lưu / Thêm</Text>
-                 </TouchableOpacity>
+                 <View style={{flexDirection: 'row', marginTop: 10, gap: 10}}>
+                     {editingLogId && (
+                         <TouchableOpacity style={[styles.saveBtn, {backgroundColor: colors.iconBg, flex: 1}]} onPress={resetForm}>
+                            <Text style={{color: colors.text, fontWeight: 'bold'}}>Hủy sửa</Text>
+                         </TouchableOpacity>
+                     )}
+                     <TouchableOpacity style={[styles.saveBtn, {backgroundColor: colors.primary, flex: 2}]} onPress={handleSaveLog}>
+                        <Text style={{color: 'white', fontWeight: 'bold'}}>{editingLogId ? 'Cập nhật' : 'Lưu / Thêm'}</Text>
+                     </TouchableOpacity>
+                 </View>
 
-                 {/* DANH SÁCH ĐÃ CHẤM TRONG NGÀY (CÓ NÚT XÓA) */}
+                 {/* DANH SÁCH LOG TRONG NGÀY (CÓ THỂ BẤM VÀO ĐỂ SỬA) */}
                  {selectedDate && getLogsForDay(selectedDate).length > 0 && (
                      <View style={{marginTop: 20, paddingTop: 10, borderTopWidth: 1, borderTopColor: colors.border, maxHeight: 150}}>
-                         <Text style={{color: colors.subText, fontSize: 12, marginBottom: 5}}>Danh sách đã chấm ngày này:</Text>
+                         <Text style={{color: colors.subText, fontSize: 12, marginBottom: 5}}>Danh sách (Chạm vào tên để sửa):</Text>
                          <ScrollView nestedScrollEnabled>
-                            {getLogsForDay(selectedDate).map((l, i) => (
-                                <View key={i} style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, padding: 8, backgroundColor: colors.bg, borderRadius: 8}}>
-                                    <View>
-                                        <Text style={{color: colors.text, fontWeight: 'bold'}}>{l.employeeName}</Text>
-                                        <Text style={{color: colors.subText, fontSize: 11}}>
-                                            {format(parseISO(l.startTime), 'HH:mm')} - {format(parseISO(l.endTime), 'HH:mm')} ({formatDuration(l.durationMinutes)})
-                                        </Text>
+                            {getLogsForDay(selectedDate).map((l, i) => {
+                                const isEditing = l.id === editingLogId;
+                                return (
+                                    <View key={i} style={{
+                                        flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', 
+                                        marginBottom: 8, padding: 8, 
+                                        backgroundColor: isEditing ? colors.primary + '20' : colors.bg, 
+                                        borderRadius: 8,
+                                        borderWidth: isEditing ? 1 : 0, borderColor: colors.primary
+                                    }}>
+                                        <TouchableOpacity style={{flex: 1}} onPress={() => handleStartEdit(l)}>
+                                            <View>
+                                                <Text style={{color: colors.text, fontWeight: 'bold'}}>{l.employeeName} {isEditing ? '(Đang sửa)' : ''}</Text>
+                                                <Text style={{color: colors.subText, fontSize: 11}}>
+                                                    {format(parseISO(l.startTime), 'HH:mm')} - {format(parseISO(l.endTime), 'HH:mm')} ({formatDuration(l.durationMinutes)})
+                                                </Text>
+                                            </View>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity onPress={() => handleDeleteLog(l.id)} style={{padding: 8}}>
+                                            <Ionicons name="trash" size={20} color={colors.error}/>
+                                        </TouchableOpacity>
                                     </View>
-                                    <TouchableOpacity onPress={() => handleDeleteLog(l.id)} style={{padding: 8}}>
-                                        <Ionicons name="trash" size={20} color={colors.error}/>
-                                    </TouchableOpacity>
-                                </View>
-                            ))}
+                                );
+                            })}
                          </ScrollView>
                      </View>
                  )}
@@ -409,7 +532,6 @@ export default function CalendarScreen() {
                     </TouchableOpacity>
                  </View>
                  <Text style={{color: colors.text, marginBottom: 10, textAlign: 'center'}}>Chi tiết tháng {format(currentMonth, 'MM/yyyy')}</Text>
-                 
                  <ScrollView>
                      {getDetailLogs().length === 0 ? (
                          <Text style={{textAlign: 'center', color: colors.subText, marginTop: 20}}>Không có dữ liệu trong tháng này.</Text>
@@ -436,15 +558,24 @@ export default function CalendarScreen() {
           </View>
         </Modal>
 
-        {/* TIME PICKER COMPONENT */}
-        {showTimePicker && (
+        {/* TIME PICKER (Mobile Only) */}
+        {showTimePicker && Platform.OS !== 'web' && (
              <DateTimePicker 
                 value={showTimePicker === 'start' ? startTime : endTime} 
-                mode="time" 
-                is24Hour={true} 
+                mode="time" is24Hour={true} 
                 display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                 onChange={onChangeTime} 
              />
+        )}
+        
+        {/* iOS Close Button */}
+        {Platform.OS === 'ios' && showTimePicker && (
+             <TouchableOpacity 
+                style={{position: 'absolute', bottom: 0, width: '100%', backgroundColor: colors.card, padding: 15, alignItems: 'center', borderTopWidth:1, borderColor: colors.border}}
+                onPress={() => setShowTimePicker(null)}
+             >
+                <Text style={{color: colors.primary, fontWeight: 'bold', fontSize: 16}}>Xong</Text>
+             </TouchableOpacity>
         )}
 
       </SafeAreaView>
@@ -477,6 +608,6 @@ const styles = StyleSheet.create({
   modalContent: { width: '100%', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, borderWidth: 1 },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
   inputMulti: { borderWidth: 1, borderRadius: 12, padding: 12, fontSize: 16 },
-  saveBtn: { padding: 16, borderRadius: 16, alignItems: 'center', marginTop: 10 },
+  saveBtn: { padding: 16, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   timeBox: { width: '40%', padding: 10, borderRadius: 10, borderWidth: 1, alignItems: 'center' },
 });
