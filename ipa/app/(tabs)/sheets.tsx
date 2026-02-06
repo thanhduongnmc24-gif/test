@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   StyleSheet, Text, View, TouchableOpacity, TextInput, Image, 
   ScrollView, Alert, ActivityIndicator, KeyboardAvoidingView, Platform, Linking 
@@ -19,31 +19,84 @@ export default function SheetsScreen() {
   // --- STATE ---
   const DEFAULT_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwmGmcshrvrCsfmqXmj1qlyERulh0CtawveADAMK8rwR4g-Oa5h4NMEo73EiSrIiNcK/exec';
   
-  const [webhookUrl, setWebhookUrl] = useState(DEFAULT_SCRIPT_URL); // Link Script (Để gửi)
-  const [sheetLink, setSheetLink] = useState(''); // Link Trang tính (Để mở xem)
+  const [webhookUrl, setWebhookUrl] = useState(DEFAULT_SCRIPT_URL);
+  const [sheetLink, setSheetLink] = useState('');
   
   const [showConfig, setShowConfig] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  
+  // Biến kiểm tra đã load dữ liệu xong chưa (để tránh lưu đè khi vừa mở app)
+  const [isDataLoaded, setIsDataLoaded] = useState(false);
 
   // Danh sách dữ liệu
   const [textList, setTextList] = useState<TextItem[]>([{ id: '1', cell: '', content: '' }]);
   const [imageList, setImageList] = useState<ImageItem[]>([{ id: '1', cell: '', uri: '', base64: null }]);
 
-  // Load Cấu hình đã lưu
+  // --- 1. LOAD DATA KHI MỞ APP ---
   useEffect(() => {
-    const loadSettings = async () => {
+    const loadAllData = async () => {
         try {
+            // Load Cài đặt
             const savedScript = await AsyncStorage.getItem('SHEET_API_URL');
             if (savedScript) setWebhookUrl(savedScript);
 
             const savedLink = await AsyncStorage.getItem('GOOGLE_SHEET_LINK');
             if (savedLink) setSheetLink(savedLink);
-        } catch(e) {}
+
+            // Load Dữ liệu Text
+            const savedTexts = await AsyncStorage.getItem('SHEET_DATA_TEXTS');
+            if (savedTexts) {
+                const parsedTexts = JSON.parse(savedTexts);
+                if (parsedTexts.length > 0) setTextList(parsedTexts);
+            }
+
+            // Load Dữ liệu Ảnh (Cấu trúc thôi, không có ảnh)
+            const savedImages = await AsyncStorage.getItem('SHEET_DATA_IMAGES');
+            if (savedImages) {
+                const parsedImages = JSON.parse(savedImages);
+                if (parsedImages.length > 0) setImageList(parsedImages);
+            }
+
+        } catch(e) {
+            console.log("Lỗi load data:", e);
+        } finally {
+            // Đánh dấu là đã load xong, giờ có thay đổi thì mới cho lưu
+            setIsDataLoaded(true);
+        }
     };
-    loadSettings();
+    loadAllData();
   }, []);
 
-  // Lưu Cấu hình
+  // --- 2. AUTO SAVE (TỰ ĐỘNG LƯU KHI CÓ THAY ĐỔI) ---
+  useEffect(() => {
+    if (!isDataLoaded) return; // Chưa load xong thì đừng lưu bậy
+
+    const saveData = async () => {
+        try {
+            // Lưu Text: Lưu hết
+            await AsyncStorage.setItem('SHEET_DATA_TEXTS', JSON.stringify(textList));
+
+            // Lưu Ảnh: CHỈ LƯU VỊ TRÍ CELL, KHÔNG LƯU URI/BASE64
+            const cleanImages = imageList.map(img => ({
+                id: img.id,
+                cell: img.cell,
+                uri: '',        // Xóa ảnh
+                base64: null    // Xóa data ảnh
+            }));
+            await AsyncStorage.setItem('SHEET_DATA_IMAGES', JSON.stringify(cleanImages));
+            
+        } catch (e) {
+            console.log("Lỗi auto save:", e);
+        }
+    };
+    
+    // Dùng timeout để tránh lưu liên tục khi gõ phím (Debounce nhẹ 500ms)
+    const timeoutId = setTimeout(saveData, 500);
+    return () => clearTimeout(timeoutId);
+
+  }, [textList, imageList, isDataLoaded]);
+
+  // Lưu Cấu hình riêng (Khi bấm nút Lưu ở panel)
   const saveSettings = async () => {
       try {
         await AsyncStorage.setItem('SHEET_API_URL', webhookUrl);
@@ -127,8 +180,9 @@ export default function SheetsScreen() {
       const result = await response.json();
       if (result.result === 'success') {
         Alert.alert("Thành công! 🚀", `Đã gửi xong!`);
-        setTextList([{ id: Date.now().toString(), cell: '', content: '' }]);
-        setImageList([{ id: (Date.now()+1).toString(), cell: '', uri: '', base64: null }]);
+        // Giữ lại cấu trúc ô, chỉ xóa nội dung để nhập tiếp (hoặc giữ nguyên tùy ý)
+        // Ở đây Tèo giữ nguyên theo ý anh là "dữ liệu phải được lưu lại"
+        // Nếu anh muốn gửi xong xóa trắng thì bảo Tèo sửa nhé.
       } else {
         throw new Error(result.error);
       }
@@ -173,7 +227,6 @@ export default function SheetsScreen() {
       shadowColor: "#000", shadowOffset: {width: 0, height: 2}, shadowOpacity: 0.2, shadowRadius: 3, elevation: 3
     },
     
-    // Style cho Config Panel
     configPanel: {
         padding: 15, backgroundColor: colors.card, marginHorizontal: 20, marginBottom: 10, 
         borderRadius: 12, borderWidth: 1, borderColor: colors.primary
@@ -194,21 +247,17 @@ export default function SheetsScreen() {
             <View style={styles.headerRow}>
                 <Text style={{fontSize: 24, fontWeight: 'bold', color: colors.text}}>Sheets 📊</Text>
                 
-                {/* Cụm nút bấm bên phải */}
                 <View style={{flexDirection: 'row', gap: 15}}>
-                    {/* Nút Mở Link Trang Tính */}
                     <TouchableOpacity onPress={openGoogleSheet} style={{padding: 5}}>
                        <Ionicons name="open-outline" size={26} color={colors.success} />
                     </TouchableOpacity>
 
-                    {/* Nút Cài đặt (Bánh răng) */}
                     <TouchableOpacity onPress={() => setShowConfig(!showConfig)} style={{padding: 5}}>
                        <Ionicons name={showConfig ? "close-circle" : "settings-sharp"} size={26} color={colors.primary} />
                     </TouchableOpacity>
                 </View>
             </View>
 
-            {/* PANEL CẤU HÌNH (Ẩn/Hiện) */}
             {showConfig && (
                 <View style={styles.configPanel}>
                    <Text style={{textAlign:'center', fontWeight:'bold', color: colors.primary, marginBottom: 10}}>CÀI ĐẶT KẾT NỐI</Text>
