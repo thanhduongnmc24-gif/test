@@ -138,7 +138,9 @@ export default function CalendarScreen() {
   // Chọn giờ Mobile
   const onChangeTime = (event: any, selectedDate?: Date) => {
     const type = showTimePicker;
+    // Trên Android thì tắt luôn sau khi chọn, iOS thì không tắt để còn bấm Xong
     if(Platform.OS === 'android') setShowTimePicker(null);
+    
     if (selectedDate && type) {
         if (type === 'start') setStartTime(selectedDate);
         else setEndTime(selectedDate);
@@ -338,10 +340,10 @@ export default function CalendarScreen() {
                       <Text style={[styles.lunarText, {color: colors.subText}, lunarInfo.isFirstDay && {color: '#EF4444', fontWeight: 'bold'}]}>{lunarInfo.text}</Text>
                     </View>
                     <View style={{marginTop: 4, flex: 1}}> 
-                      {/* --- PHẦN SỬA ĐỔI: HIỂN THỊ GIỜ BẮT ĐẦU - KẾT THÚC --- */}
+                      {/* --- ĐÃ SỬA: CHỈ HIỂN THỊ TÊN, BỎ THỜI GIAN --- */}
                       {dayLogs.slice(0, 3).map((l, i) => (
-                        <Text key={i} numberOfLines={1} style={{fontSize: 8, color: colors.primary, marginBottom: 1, fontWeight: 'bold'}}>
-                            {l.employeeName}: {format(parseISO(l.startTime), 'HH:mm')}-{format(parseISO(l.endTime), 'HH:mm')}
+                        <Text key={i} numberOfLines={1} style={{fontSize: 9, color: colors.primary, marginBottom: 1, fontWeight: 'bold'}}>
+                            {l.employeeName}
                         </Text>
                       ))}
                       {dayLogs.length > 3 && <Text style={{fontSize: 8, color: colors.subText}}>...</Text>}
@@ -472,6 +474,32 @@ export default function CalendarScreen() {
                           </>
                       )}
                  </View>
+
+                 {/* --- TIME PICKER ĐÃ ĐƯỢC ĐƯA VÀO TRONG MODAL --- */}
+                 {showTimePicker && Platform.OS !== 'web' && (
+                     <View style={{marginTop: 20, alignItems: 'center'}}>
+                         <DateTimePicker 
+                            value={showTimePicker === 'start' ? startTime : endTime} 
+                            mode="time" is24Hour={true} 
+                            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                            onChange={onChangeTime} 
+                            style={{width: '100%', height: 120}}
+                         />
+                         
+                         {Platform.OS === 'ios' && (
+                             <TouchableOpacity 
+                                onPress={() => setShowTimePicker(null)}
+                                style={{
+                                    marginTop: 10, paddingVertical: 8, paddingHorizontal: 30, 
+                                    backgroundColor: colors.iconBg, borderRadius: 20
+                                }}
+                             >
+                                <Text style={{color: colors.primary, fontWeight: 'bold'}}>Xong</Text>
+                             </TouchableOpacity>
+                         )}
+                     </View>
+                 )}
+                 {/* ------------------------------------------------ */}
                  
                  <View style={{flexDirection: 'row', marginTop: 10, gap: 10}}>
                      {editingLogId && (
@@ -557,26 +585,6 @@ export default function CalendarScreen() {
              </View>
           </View>
         </Modal>
-
-        {/* TIME PICKER (Mobile Only) */}
-        {showTimePicker && Platform.OS !== 'web' && (
-             <DateTimePicker 
-                value={showTimePicker === 'start' ? startTime : endTime} 
-                mode="time" is24Hour={true} 
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={onChangeTime} 
-             />
-        )}
-        
-        {/* iOS Close Button */}
-        {Platform.OS === 'ios' && showTimePicker && (
-             <TouchableOpacity 
-                style={{position: 'absolute', bottom: 0, width: '100%', backgroundColor: colors.card, padding: 15, alignItems: 'center', borderTopWidth:1, borderColor: colors.border}}
-                onPress={() => setShowTimePicker(null)}
-             >
-                <Text style={{color: colors.primary, fontWeight: 'bold', fontSize: 16}}>Xong</Text>
-             </TouchableOpacity>
-        )}
 
       </SafeAreaView>
     </LinearGradient>
