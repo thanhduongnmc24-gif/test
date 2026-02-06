@@ -1,125 +1,91 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { 
   StyleSheet, Text, View, TouchableOpacity, ScrollView, 
-  Modal, TextInput, KeyboardAvoidingView, Platform 
+  Modal, TextInput, KeyboardAvoidingView, Platform, Alert, FlatList 
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { 
   format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, 
   eachDayOfInterval, addMonths, subMonths, isSameDay, isSameMonth, 
-  differenceInCalendarDays, setHours, setMinutes 
+  differenceInMinutes, parseISO 
 } from 'date-fns';
 import { useFocusEffect } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../context/ThemeContext';
 import { LinearGradient } from 'expo-linear-gradient';
-import * as Notifications from 'expo-notifications';
+import DateTimePicker from '@react-native-community/datetimepicker'; 
 // @ts-ignore
 import { Solar } from 'lunar-javascript';
 
-type NoteData = {
-  type: string; // 'ngay' | 'dem' | 'nghi' | ...
-  noteLines: string[];
-};
-
-const requestNotificationsPermissions = async () => {
-  const { status } = await Notifications.requestPermissionsAsync({
-    ios: { allowAlert: true, allowBadge: true, allowSound: true },
-    android: {}
-  });
-  if (status !== 'granted') console.log('Chưa có quyền thông báo.');
+// Kiểu dữ liệu
+type WorkLog = {
+  id: string;
+  date: string; 
+  employeeName: string;
+  startTime: string;
+  endTime: string;
+  durationMinutes: number;
 };
 
 export default function CalendarScreen() {
   const { colors, theme } = useTheme();
+  
+  // --- STATE ---
   const [currentMonth, setCurrentMonth] = useState(new Date()); 
   const [selectedDate, setSelectedDate] = useState<Date | null>(null); 
+  const [logs, setLogs] = useState<WorkLog[]>([]);
+
+  // Modal Nhập Liệu
   const [modalVisible, setModalVisible] = useState(false);
-  const [notes, setNotes] = useState<Record<string, NoteData>>({});
-  const [cycleStartDate, setCycleStartDate] = useState<Date | null>(null);
-  
-  // [MỚI] Pattern chu kỳ làm việc
-  const [cyclePattern, setCyclePattern] = useState<string[]>(['ngay', 'dem', 'nghi']);
+  const [empName, setEmpName] = useState('');
+  const [startTime, setStartTime] = useState(new Date());
+  const [endTime, setEndTime] = useState(new Date());
+  const [showTimePicker, setShowTimePicker] = useState<'start' | 'end' | null>(null);
 
-  const [summaryMode, setSummaryMode] = useState<'date' | 'content'>('date');
-  const [tempNotesList, setTempNotesList] = useState<string[]>([]);
-  const [tempType, setTempType] = useState<string>('');
-  
-  const [isNotifEnabled, setIsNotifEnabled] = useState(false);
-  const [times, setTimes] = useState({
-    ngay: new Date(new Date().setHours(6,0,0,0)),
-    dem: new Date(new Date().setHours(18,0,0,0)),
-    nghi: new Date(new Date().setHours(8,0,0,0)),
-    normal: new Date(new Date().setHours(7,0,0,0)),
-  });
+  // Modal Chi Tiết Nhân Viên (Mới)
+  const [detailModalVisible, setDetailModalVisible] = useState(false);
+  const [selectedEmpDetail, setSelectedEmpDetail] = useState<string | null>(null);
 
+  // Chế độ xem tổng hợp
+  const [summaryMode, setSummaryMode] = useState<'date' | 'employee'>('date');
+
+  // Load Data
   useFocusEffect(
     useCallback(() => {
-      const loadAllData = async () => {
+      const loadData = async () => {
         try {
-          await requestNotificationsPermissions();
-          
-          const savedDate = await AsyncStorage.getItem('CYCLE_START_DATE');
-          if (savedDate) setCycleStartDate(new Date(savedDate));
-
-          const savedNotes = await AsyncStorage.getItem('CALENDAR_NOTES');
-          if (savedNotes) setNotes(JSON.parse(savedNotes));
-
-          const savedEnabled = await AsyncStorage.getItem('NOTIF_ENABLED');
-          if (savedEnabled) setIsNotifEnabled(JSON.parse(savedEnabled));
-
-          // [MỚI] Load Pattern chu kỳ
-          const savedPattern = await AsyncStorage.getItem('WORK_CYCLE_PATTERN');
-          if (savedPattern) setCyclePattern(JSON.parse(savedPattern));
-          else setCyclePattern(['ngay', 'dem', 'nghi']); // Mặc định nếu chưa có
-
-          const tDay = await AsyncStorage.getItem('TIME_DAY');
-          const tNight = await AsyncStorage.getItem('TIME_NIGHT');
-          const tOff = await AsyncStorage.getItem('TIME_OFF');
-          const tNormal = await AsyncStorage.getItem('TIME_NORMAL');
-
-          setTimes({
-            ngay: tDay ? new Date(tDay) : new Date(new Date().setHours(6,0,0,0)),
-            dem: tNight ? new Date(tNight) : new Date(new Date().setHours(18,0,0,0)),
-            nghi: tOff ? new Date(tOff) : new Date(new Date().setHours(8,0,0,0)),
-            normal: tNormal ? new Date(tNormal) : new Date(new Date().setHours(7,0,0,0)),
-          });
-
+          const savedLogs = await AsyncStorage.getItem('TIMEKEEPING_LOGS');
+          if (savedLogs) setLogs(JSON.parse(savedLogs));
         } catch (e) { console.log('Lỗi load:', e); }
       };
-      loadAllData();
+      loadData();
     }, [])
   );
 
-  const scheduleAutoNotification = async (date: Date, lines: string[], type: string) => {
-    if (!isNotifEnabled) return;
-    let selectedTime = times.normal;
-    let prefixTitle = "Ghi chú";
-    if (type === 'ngay') { selectedTime = times.ngay; prefixTitle = "Ca Ngày"; }
-    else if (type === 'dem') { selectedTime = times.dem; prefixTitle = "Ca Đêm"; }
-    else if (type === 'nghi') { selectedTime = times.nghi; prefixTitle = "Ngày Nghỉ"; }
-
-    const triggerDate = setMinutes(setHours(date, selectedTime.getHours()), selectedTime.getMinutes());
-    if (triggerDate.getTime() > new Date().getTime()) {
-      await Notifications.scheduleNotificationAsync({
-        content: { title: `🔔 Lịch: ${prefixTitle}`, body: lines.join('\n'), sound: true },
-        // @ts-ignore
-        trigger: triggerDate,
-      });
-    }
+  const saveLogs = async (newLogs: WorkLog[]) => {
+    setLogs(newLogs);
+    await AsyncStorage.setItem('TIMEKEEPING_LOGS', JSON.stringify(newLogs));
   };
 
-  // [MỚI] Logic tính toán dựa trên pattern động
-  const calculateAutoShift = (targetDate: Date) => {
-    if (!cycleStartDate || cyclePattern.length === 0) return null;
-    const diff = differenceInCalendarDays(targetDate, cycleStartDate);
-    
-    // Logic toán học để xử lý số âm và modulo theo độ dài mảng pattern
-    const patternLength = cyclePattern.length;
-    const remainder = ((diff % patternLength) + patternLength) % patternLength;
-    
-    return cyclePattern[remainder];
+  // --- LOGIC TÍNH TOÁN ---
+  const calculateDuration = (start: Date, end: Date) => {
+    let diff = differenceInMinutes(end, start);
+    if (diff < 0) diff += 1440; // Qua đêm
+    return diff;
+  };
+
+  const formatDuration = (minutes: number) => {
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return `${h}h${m > 0 ? m : ''}`; 
+  };
+  
+  const formatDurationFull = (minutes: number) => {
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    const decimal = (minutes / 60).toFixed(1).replace('.', ',');
+    return `${h} giờ ${m} phút (${decimal} giờ)`;
   };
 
   const getLunarInfo = (date: Date) => {
@@ -131,91 +97,111 @@ export default function CalendarScreen() {
     } catch (e) { return { text: '', isFirstDay: false }; }
   };
 
-  const renderIcon = (type: string, size: number = 12) => {
-    switch (type) {
-      case 'ngay': return <Ionicons name="sunny" size={size} color={theme === 'dark' ? "#FDB813" : "#F59E0B"} />;
-      case 'dem': return <Ionicons name="moon" size={size} color={theme === 'dark' ? "#2DD4BF" : "#6366F1"} />;
-      case 'nghi': return <Ionicons name="cafe" size={size} color={theme === 'dark' ? "#FDA4AF" : "#78350F"} />;
-      default: return null;
-    }
-  };
-
+  // --- HANDLERS ---
   const handlePressDay = (date: Date) => {
     setSelectedDate(date);
-    const dateKey = format(date, 'yyyy-MM-dd');
-    const manualData = notes[dateKey];
-    const autoType = calculateAutoShift(date);
-    setTempType(autoType || ''); 
-    setTempNotesList(manualData?.noteLines?.length ? [...manualData.noteLines] : ['']);
+    // Reset form
+    const now = new Date();
+    setStartTime(now);
+    setEndTime(now);
+    setEmpName('');
     setModalVisible(true);
   };
 
-  const handleAddNoteLine = () => setTempNotesList([...tempNotesList, '']);
-  const handleChangeNoteLine = (text: string, index: number) => {
-    const newList = [...tempNotesList]; newList[index] = text; setTempNotesList(newList);
-  };
-  const handleDeleteNoteLine = (index: number) => {
-    const newList = [...tempNotesList]; newList.splice(index, 1); setTempNotesList(newList);
-  };
-
-  const handleSave = async () => {
-    if (selectedDate) {
-      const dateKey = format(selectedDate, 'yyyy-MM-dd');
-      let newNotes = { ...notes };
-      const cleanLines = tempNotesList.filter(line => line.trim() !== '');
-      if (cleanLines.length === 0) delete newNotes[dateKey];
-      else { newNotes[dateKey] = { type: tempType, noteLines: cleanLines }; await scheduleAutoNotification(selectedDate, cleanLines, tempType); }
-      setNotes(newNotes);
-      setModalVisible(false);
-      try { await AsyncStorage.setItem('CALENDAR_NOTES', JSON.stringify(newNotes)); } catch (e) {}
+  // Xử lý chọn giờ (Fix lỗi không nhập được)
+  const onChangeTime = (event: any, selectedDate?: Date) => {
+    const type = showTimePicker;
+    if (Platform.OS === 'android') {
+        setShowTimePicker(null); // Tắt picker ngay trên Android sau khi chọn
+    }
+    
+    if (selectedDate && type) {
+        if (type === 'start') setStartTime(selectedDate);
+        else setEndTime(selectedDate);
     }
   };
 
-  const getNotesByDate = () => {
-    const start = startOfMonth(currentMonth);
-    const end = endOfMonth(currentMonth);
-    return eachDayOfInterval({ start, end }).map(day => {
-      const dateKey = format(day, 'yyyy-MM-dd');
-      const data = notes[dateKey];
-      if (data?.noteLines?.length > 0) return { date: day, noteLines: data.noteLines };
-      return null;
-    }).filter(item => item !== null) as { date: Date, noteLines: string[] }[];
+  const handleAddLog = () => {
+    if (!empName.trim() || !selectedDate) return Alert.alert("Thiếu tên", "Nhập tên nhân viên đi anh hai!");
+    
+    // Làm tròn giây về 0
+    const s = new Date(startTime); s.setSeconds(0); s.setMilliseconds(0);
+    const e = new Date(endTime); e.setSeconds(0); e.setMilliseconds(0);
+    
+    const duration = calculateDuration(s, e);
+    
+    const newLog: WorkLog = {
+      id: Date.now().toString(),
+      date: selectedDate.toISOString(),
+      employeeName: empName.trim(),
+      startTime: s.toISOString(),
+      endTime: e.toISOString(),
+      durationMinutes: duration
+    };
+
+    saveLogs([...logs, newLog]);
+    // Không đóng Modal ngay để còn nhập người khác, chỉ reset tên
+    setEmpName('');
+    Alert.alert("Đã lưu", "Thêm thành công! Nhập tiếp người khác hoặc đóng.");
   };
 
-  const getNotesByContent = () => {
-    const start = startOfMonth(currentMonth);
-    const end = endOfMonth(currentMonth);
-    const byDateList = eachDayOfInterval({ start, end }).map(day => {
-      const dateKey = format(day, 'yyyy-MM-dd');
-      const data = notes[dateKey];
-      if (data?.noteLines?.length > 0) return { date: day, noteLines: data.noteLines };
-      return null;
-    }).filter(item => item !== null) as { date: Date, noteLines: string[] }[];
+  const handleDeleteLog = (id: string) => {
+    Alert.alert("Xác nhận xóa", "Anh có chắc muốn xóa dòng chấm công này không?", [
+      { text: "Hủy", style: "cancel" },
+      { text: "Xóa luôn", style: "destructive", onPress: () => {
+          saveLogs(logs.filter(l => l.id !== id));
+      }}
+    ]);
+  };
 
-    const aggregator: Record<string, string[]> = {};
-    byDateList.forEach(item => {
-      const dayStr = format(item.date, 'd'); 
-      item.noteLines.forEach(line => {
-        const parts = line.split(/[,;]+/); 
-        parts.forEach(part => {
-          const key = part.trim(); 
-          if (key) {
-            if (!aggregator[key]) aggregator[key] = [];
-            if (!aggregator[key].includes(dayStr)) aggregator[key].push(dayStr);
-          }
+  // Xem chi tiết nhân viên
+  const handleViewEmployeeDetail = (name: string) => {
+    setSelectedEmpDetail(name);
+    setDetailModalVisible(true);
+  };
+
+  // --- DATA PROCESSING ---
+  const getLogsForDay = (date: Date) => logs.filter(l => isSameDay(parseISO(l.date), date));
+
+  // Lọc log cho Modal Chi tiết (Chỉ lấy tháng hiện tại + Tên đã chọn)
+  const getDetailLogs = () => {
+    if (!selectedEmpDetail) return [];
+    return logs.filter(l => 
+        l.employeeName === selectedEmpDetail && 
+        isSameMonth(parseISO(l.date), currentMonth)
+    ).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  };
+
+  const summaryData = useMemo(() => {
+    const monthlyLogs = logs.filter(l => isSameMonth(parseISO(l.date), currentMonth));
+
+    if (summaryMode === 'date') {
+        const grouped: Record<string, WorkLog[]> = {};
+        monthlyLogs.forEach(log => {
+            const d = log.date.split('T')[0];
+            if (!grouped[d]) grouped[d] = [];
+            grouped[d].push(log);
         });
-      });
-    });
-    return Object.keys(aggregator).map(key => ({ name: key, days: aggregator[key].join(', ') }));
-  };
+        return Object.keys(grouped).sort().reverse().map(dateStr => ({
+            type: 'date', key: dateStr, date: parseISO(dateStr), items: grouped[dateStr]
+        }));
+    } else {
+        const grouped: Record<string, number> = {};
+        monthlyLogs.forEach(log => {
+            grouped[log.employeeName] = (grouped[log.employeeName] || 0) + log.durationMinutes;
+        });
+        return Object.keys(grouped).map(name => ({
+            type: 'employee', key: name, name: name, totalMinutes: grouped[name]
+        })).sort((a, b) => b.totalMinutes - a.totalMinutes);
+    }
+  }, [logs, currentMonth, summaryMode]);
 
+  // Calendar Setup
   const days = eachDayOfInterval({
     start: startOfWeek(startOfMonth(currentMonth), { weekStartsOn: 1 }),
     end: endOfWeek(endOfMonth(currentMonth), { weekStartsOn: 1 })
   });
   const weekDays = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
-  const summaryListDate = getNotesByDate();
-  const summaryListContent = getNotesByContent();
   const gridBorderColor = theme === 'dark' ? 'rgba(255,255,255,0.15)' : '#E5E7EB';
 
   return (
@@ -236,13 +222,12 @@ export default function CalendarScreen() {
                 const isSunday = index === 6;
                 const normalDayBg = theme === 'dark' ? 'rgba(56, 189, 248, 0.15)' : '#E0F2FE'; 
                 const normalDayBorder = theme === 'dark' ? 'rgba(56, 189, 248, 0.5)' : '#BAE6FD'; 
-                const normalDayText = theme === 'dark' ? '#BAE6FD' : '#0369A1'; 
                 return (
                   <View key={index} style={[styles.headerCell, {
                         backgroundColor: isSunday ? (theme === 'dark' ? 'rgba(239, 68, 68, 0.2)' : '#FEE2E2') : normalDayBg, 
                         borderColor: isSunday ? '#EF4444' : normalDayBorder, borderWidth: 1, borderRadius: 8, marginHorizontal: 2 
                   }]}>
-                    <Text style={[styles.weekText, { color: isSunday ? '#EF4444' : normalDayText }]}>{day}</Text>
+                    <Text style={[styles.weekText, { color: isSunday ? '#EF4444' : (theme === 'dark' ? '#BAE6FD' : '#0369A1') }]}>{day}</Text>
                   </View>
                 );
               })}
@@ -250,13 +235,9 @@ export default function CalendarScreen() {
             
             <View style={[styles.gridContainer, { borderTopWidth: 0 }]}>
               {days.map((day, index) => {
-                const dateKey = format(day, 'yyyy-MM-dd');
                 const isCurrentMonth = isSameMonth(day, currentMonth);
                 const lunarInfo = getLunarInfo(day);
-                const manualData = notes[dateKey];
-                const autoType = calculateAutoShift(day);
-                const displayType = manualData?.type || autoType; // Hiển thị theo chu kỳ động
-                const displayLines = manualData?.noteLines || [];
+                const dayLogs = getLogsForDay(day);
                 const isToday = isSameDay(day, new Date());
                 const isSelected = selectedDate && isSameDay(day, selectedDate);
                 
@@ -268,8 +249,6 @@ export default function CalendarScreen() {
                     cellBg = colors.primary + '20'; currentBorderColor = colors.primary; currentBorderWidth = 2;
                 } else if (isToday) {
                     cellBg = theme === 'dark' ? 'rgba(253, 224, 71, 0.15)' : '#FEF9C3'; currentBorderColor = '#F59E0B'; currentBorderWidth = 1;
-                } else if (displayType === 'nghi') {
-                    cellBg = theme === 'dark' ? 'rgba(255,255,255,0.05)' : '#F8FAFC';
                 }
 
                 return (
@@ -279,11 +258,13 @@ export default function CalendarScreen() {
                       <Text style={[styles.lunarText, {color: colors.subText}, lunarInfo.isFirstDay && {color: '#EF4444', fontWeight: 'bold'}]}>{lunarInfo.text}</Text>
                     </View>
                     <View style={{marginTop: 4, flex: 1}}> 
-                      {displayLines.slice(0, 3).map((line, i) => (<Text key={i} numberOfLines={1} style={{fontSize: 8.5, color: colors.text, marginBottom: 1, fontWeight: '500'}}>{line}</Text>))}
-                      {displayLines.length > 3 && <Text style={{fontSize: 8, color: colors.subText}}>...</Text>}
+                      {dayLogs.slice(0, 3).map((l, i) => (
+                        <Text key={i} numberOfLines={1} style={{fontSize: 8.5, color: colors.primary, marginBottom: 1, fontWeight: 'bold'}}>
+                            {l.employeeName}: {formatDuration(l.durationMinutes)}
+                        </Text>
+                      ))}
+                      {dayLogs.length > 3 && <Text style={{fontSize: 8, color: colors.subText}}>...</Text>}
                     </View>
-                    {/* @ts-ignore */}
-                    {displayType && <View style={styles.bottomRightIcon}>{renderIcon(displayType, 12)}</View>}
                   </TouchableOpacity>
                 );
               })}
@@ -293,97 +274,179 @@ export default function CalendarScreen() {
           {/* BẢNG TỔNG HỢP */}
           <View style={styles.separator} />
           <View style={styles.toolbar}>
-             <Text style={[styles.toolbarTitle, {color: colors.text}]}>Tổng Hợp Ghi Chú</Text>
+             <Text style={[styles.toolbarTitle, {color: colors.text}]}>Tổng Hợp Tháng</Text>
              <View style={[styles.switchContainer, {backgroundColor: colors.iconBg}]}>
                 <TouchableOpacity style={[styles.switchBtn, summaryMode === 'date' && {backgroundColor: colors.card}]} onPress={() => setSummaryMode('date')}>
-                  <Text style={{color: summaryMode === 'date' ? colors.primary : colors.subText, fontWeight:'bold'}}>Theo Ngày</Text>
+                  <Text style={{color: summaryMode === 'date' ? colors.primary : colors.subText, fontWeight:'bold'}}>Ngày</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.switchBtn, summaryMode === 'content' && {backgroundColor: colors.card}]} onPress={() => setSummaryMode('content')}>
-                  <Text style={{color: summaryMode === 'content' ? colors.primary : colors.subText, fontWeight:'bold'}}>Theo Tên</Text>
+                <TouchableOpacity style={[styles.switchBtn, summaryMode === 'employee' && {backgroundColor: colors.card}]} onPress={() => setSummaryMode('employee')}>
+                  <Text style={{color: summaryMode === 'employee' ? colors.primary : colors.subText, fontWeight:'bold'}}>Tên</Text>
                 </TouchableOpacity>
              </View>
           </View>
 
           <View style={styles.summaryTable}>
-            {summaryMode === 'date' ? (
-              summaryListDate.length === 0 ? <Text style={{textAlign: 'center', color: colors.subText, fontStyle: 'italic', marginTop: 20}}>Tháng này trống.</Text> :
-              summaryListDate.map((item, idx) => (
-                <View key={idx} style={[styles.glassRow, {backgroundColor: colors.card, borderColor: colors.border}]}>
-                   <View style={[styles.dateBadge, {backgroundColor: colors.iconBg}]}>
-                      <Text style={{fontSize: 16, fontWeight: 'bold', color: colors.primary}}>{format(item.date, 'dd')}</Text>
-                      <Text style={{fontSize: 10, color: colors.subText}}>{format(item.date, 'EEE')}</Text>
-                   </View>
-                   <View style={{flex: 1}}>{item.noteLines.map((l,i) => <Text key={i} style={{color: colors.text}}>• {l}</Text>)}</View>
-                </View>
-              ))
+            {summaryData.length === 0 ? (
+                <Text style={{textAlign: 'center', color: colors.subText, fontStyle: 'italic', marginTop: 20}}>Chưa có dữ liệu chấm công.</Text>
             ) : (
-              summaryListContent.length === 0 ? <Text style={{textAlign: 'center', color: colors.subText, fontStyle: 'italic', marginTop: 20}}>Không có dữ liệu.</Text> :
-              summaryListContent.map((item, idx) => (
-                <View key={idx} style={[styles.compactRow, {backgroundColor: colors.card, borderColor: colors.border}]}>
-                   <Text style={{fontSize: 14, color: colors.text, lineHeight: 20}}>
-                      <Text style={{fontWeight:'bold', color: colors.primary}}>{item.name}: </Text>
-                      {item.days}
-                   </Text>
-                </View>
-              ))
+                summaryData.map((item: any, idx) => {
+                    if (summaryMode === 'date') {
+                        return (
+                            <View key={idx} style={[styles.glassRow, {backgroundColor: colors.card, borderColor: colors.border}]}>
+                                <View style={[styles.dateBadge, {backgroundColor: colors.iconBg}]}>
+                                    <Text style={{fontSize: 16, fontWeight: 'bold', color: colors.primary}}>{format(item.date, 'dd')}</Text>
+                                    <Text style={{fontSize: 10, color: colors.subText}}>{format(item.date, 'EEE')}</Text>
+                                </View>
+                                <View style={{flex: 1}}>
+                                    {item.items.map((log: WorkLog, i: number) => (
+                                        <View key={i} style={{flexDirection: 'row', justifyContent:'space-between', marginBottom: 2}}>
+                                            <Text style={{color: colors.text, fontWeight:'500'}}>{log.employeeName}</Text>
+                                            <Text style={{color: colors.success}}>
+                                                {format(parseISO(log.startTime), 'HH:mm')}-{format(parseISO(log.endTime), 'HH:mm')} ({formatDuration(log.durationMinutes)})
+                                            </Text>
+                                        </View>
+                                    ))}
+                                </View>
+                            </View>
+                        );
+                    } else {
+                        // CHẾ ĐỘ XEM THEO TÊN (Bấm vào để xem chi tiết)
+                        return (
+                            <TouchableOpacity key={idx} onPress={() => handleViewEmployeeDetail(item.name)}>
+                                <View style={[styles.compactRow, {backgroundColor: colors.card, borderColor: colors.border}]}>
+                                    <View style={{flexDirection:'row', justifyContent:'space-between', alignItems:'center'}}>
+                                    <View style={{flexDirection:'row', alignItems:'center'}}>
+                                        <View style={{width: 30, height: 30, borderRadius: 15, backgroundColor: colors.iconBg, justifyContent:'center', alignItems:'center', marginRight: 10}}>
+                                            <Text style={{fontWeight:'bold', color: colors.primary}}>{item.name.charAt(0).toUpperCase()}</Text>
+                                        </View>
+                                        <Text style={{fontSize: 16, fontWeight:'bold', color: colors.text}}>{item.name}</Text>
+                                    </View>
+                                    <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                                        <Text style={{fontSize: 16, fontWeight:'bold', color: colors.success, marginRight: 5}}>
+                                            {formatDurationFull(item.totalMinutes)}
+                                        </Text>
+                                        <Ionicons name="chevron-forward" size={16} color={colors.subText} />
+                                    </View>
+                                    </View>
+                                </View>
+                            </TouchableOpacity>
+                        );
+                    }
+                })
             )}
           </View>
         </ScrollView>
 
+        {/* MODAL 1: NHẬP CHẤM CÔNG */}
         <Modal visible={modalVisible} animationType="fade" transparent>
           <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalOverlay}>
             <View style={[styles.modalContent, {backgroundColor: colors.card, borderColor: colors.border}]}>
               <View style={styles.modalHeader}>
-                <Text style={{fontSize: 18, fontWeight: 'bold', color: colors.text}}>{selectedDate ? format(selectedDate, 'dd/MM/yyyy') : ''}</Text>
+                <Text style={{fontSize: 18, fontWeight: 'bold', color: colors.text}}>
+                    {selectedDate ? format(selectedDate, 'dd/MM/yyyy') : ''}
+                </Text>
                 <TouchableOpacity onPress={() => setModalVisible(false)}><Ionicons name="close" size={24} color={colors.text} /></TouchableOpacity>
               </View>
               
-              <View style={{alignItems: 'center', marginBottom: 20}}>
-                 {tempType ? (
-                    <View style={[styles.singleShiftView, {backgroundColor: colors.iconBg, borderColor: colors.primary}]}>
-                        {tempType === 'ngay' && (
-                           <>
-                             <Ionicons name="sunny" size={24} color={theme === 'dark' ? "#FDB813" : "#F59E0B"} />
-                             <Text style={[styles.shiftText, {color: colors.text}]}>CA NGÀY</Text>
-                           </>
-                        )}
-                        {tempType === 'dem' && (
-                           <>
-                             <Ionicons name="moon" size={24} color={theme === 'dark' ? "#2DD4BF" : "#6366F1"} />
-                             <Text style={[styles.shiftText, {color: colors.text}]}>CA ĐÊM</Text>
-                           </>
-                        )}
-                        {tempType === 'nghi' && (
-                           <>
-                             <Ionicons name="cafe" size={24} color={theme === 'dark' ? "#FDA4AF" : "#78350F"} />
-                             <Text style={[styles.shiftText, {color: colors.text}]}>NGÀY NGHỈ</Text>
-                           </>
-                        )}
-                    </View>
-                 ) : (
-                    <Text style={{color: colors.subText, fontStyle: 'italic'}}>(Chưa thiết lập ngày bắt đầu trong Cài đặt)</Text>
+              <View style={{marginBottom: 10}}>
+                 <Text style={{color: colors.subText, marginBottom: 5, fontSize: 12}}>Tên nhân viên:</Text>
+                 <TextInput 
+                      style={[styles.inputMulti, {backgroundColor: colors.iconBg, color: colors.text, borderColor: colors.border}]} 
+                      placeholder="Nhập tên..." placeholderTextColor={colors.subText}
+                      value={empName} onChangeText={setEmpName} 
+                  />
+
+                 <View style={{flexDirection: 'row', justifyContent: 'space-between', marginTop: 15}}>
+                      <TouchableOpacity onPress={() => setShowTimePicker('start')} style={[styles.timeBox, {borderColor: colors.border, backgroundColor: colors.iconBg}]}>
+                         <Text style={{color: colors.subText, fontSize: 11}}>Giờ vào</Text>
+                         <Text style={{color: colors.primary, fontWeight: 'bold', fontSize: 18}}>{format(startTime, 'HH:mm')}</Text>
+                      </TouchableOpacity>
+                      <View style={{justifyContent:'center'}}><Ionicons name="arrow-forward" color={colors.subText} size={20}/></View>
+                      <TouchableOpacity onPress={() => setShowTimePicker('end')} style={[styles.timeBox, {borderColor: colors.border, backgroundColor: colors.iconBg}]}>
+                         <Text style={{color: colors.subText, fontSize: 11}}>Giờ ra</Text>
+                         <Text style={{color: colors.primary, fontWeight: 'bold', fontSize: 18}}>{format(endTime, 'HH:mm')}</Text>
+                      </TouchableOpacity>
+                 </View>
+                 
+                 <TouchableOpacity style={[styles.saveBtn, {backgroundColor: colors.primary}]} onPress={handleAddLog}>
+                    <Text style={{color: 'white', fontWeight: 'bold'}}>Lưu / Thêm</Text>
+                 </TouchableOpacity>
+
+                 {/* DANH SÁCH ĐÃ CHẤM TRONG NGÀY (CÓ NÚT XÓA) */}
+                 {selectedDate && getLogsForDay(selectedDate).length > 0 && (
+                     <View style={{marginTop: 20, paddingTop: 10, borderTopWidth: 1, borderTopColor: colors.border, maxHeight: 150}}>
+                         <Text style={{color: colors.subText, fontSize: 12, marginBottom: 5}}>Danh sách đã chấm ngày này:</Text>
+                         <ScrollView nestedScrollEnabled>
+                            {getLogsForDay(selectedDate).map((l, i) => (
+                                <View key={i} style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, padding: 8, backgroundColor: colors.bg, borderRadius: 8}}>
+                                    <View>
+                                        <Text style={{color: colors.text, fontWeight: 'bold'}}>{l.employeeName}</Text>
+                                        <Text style={{color: colors.subText, fontSize: 11}}>
+                                            {format(parseISO(l.startTime), 'HH:mm')} - {format(parseISO(l.endTime), 'HH:mm')} ({formatDuration(l.durationMinutes)})
+                                        </Text>
+                                    </View>
+                                    <TouchableOpacity onPress={() => handleDeleteLog(l.id)} style={{padding: 8}}>
+                                        <Ionicons name="trash" size={20} color={colors.error}/>
+                                    </TouchableOpacity>
+                                </View>
+                            ))}
+                         </ScrollView>
+                     </View>
                  )}
               </View>
-
-              <ScrollView style={{maxHeight: 200}}>
-                {tempNotesList.map((note, index) => (
-                  <View key={index} style={[styles.inputRow, { flexDirection: 'row', alignItems: 'center' }]}>
-                    <TextInput 
-                      style={[styles.inputMulti, {backgroundColor: colors.iconBg, color: colors.text, borderColor: colors.border, flex: 1}]} 
-                      placeholder={`Ghi chú ${index + 1}...`} placeholderTextColor={colors.subText}
-                      value={note} onChangeText={(text) => handleChangeNoteLine(text, index)} 
-                    />
-                    <TouchableOpacity onPress={() => handleDeleteNoteLine(index)} style={{marginLeft: 10, padding: 5}}>
-                        <Ionicons name="trash-outline" size={20} color="#EF4444" />
-                    </TouchableOpacity>
-                  </View>
-                ))}
-              </ScrollView>
-              <TouchableOpacity style={styles.addMoreBtn} onPress={handleAddNoteLine}><Ionicons name="add-circle-outline" size={20} color={colors.primary} /><Text style={{color: colors.primary, marginLeft: 5}}>Thêm dòng</Text></TouchableOpacity>
-              <TouchableOpacity style={[styles.saveBtn, {backgroundColor: colors.primary}]} onPress={handleSave}><Text style={{color: 'white', fontWeight: 'bold'}}>Lưu Ghi Chú</Text></TouchableOpacity>
             </View>
           </KeyboardAvoidingView>
         </Modal>
+
+        {/* MODAL 2: CHI TIẾT NHÂN VIÊN */}
+        <Modal visible={detailModalVisible} animationType="slide" transparent>
+          <View style={styles.modalOverlay}>
+             <View style={[styles.modalContent, {backgroundColor: colors.card, borderColor: colors.border, height: '70%'}]}>
+                 <View style={styles.modalHeader}>
+                    <Text style={{fontSize: 20, fontWeight: 'bold', color: colors.primary}}>{selectedEmpDetail}</Text>
+                    <TouchableOpacity onPress={() => setDetailModalVisible(false)}>
+                        <Ionicons name="close-circle" size={30} color={colors.subText} />
+                    </TouchableOpacity>
+                 </View>
+                 <Text style={{color: colors.text, marginBottom: 10, textAlign: 'center'}}>Chi tiết tháng {format(currentMonth, 'MM/yyyy')}</Text>
+                 
+                 <ScrollView>
+                     {getDetailLogs().length === 0 ? (
+                         <Text style={{textAlign: 'center', color: colors.subText, marginTop: 20}}>Không có dữ liệu trong tháng này.</Text>
+                     ) : (
+                         getDetailLogs().map((log, index) => (
+                             <View key={index} style={{flexDirection: 'row', justifyContent: 'space-between', padding: 12, borderBottomWidth: 1, borderBottomColor: colors.border}}>
+                                 <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                                     <View style={{width: 30, alignItems: 'center', marginRight: 10}}>
+                                         <Text style={{fontWeight: 'bold', color: colors.text, fontSize: 16}}>{format(parseISO(log.date), 'dd')}</Text>
+                                         <Text style={{fontSize: 10, color: colors.subText}}>{format(parseISO(log.date), 'EEE')}</Text>
+                                     </View>
+                                     <View>
+                                         <Text style={{color: colors.text}}>
+                                            {format(parseISO(log.startTime), 'HH:mm')} - {format(parseISO(log.endTime), 'HH:mm')}
+                                         </Text>
+                                     </View>
+                                 </View>
+                                 <Text style={{fontWeight: 'bold', color: colors.success}}>{formatDurationFull(log.durationMinutes)}</Text>
+                             </View>
+                         ))
+                     )}
+                 </ScrollView>
+             </View>
+          </View>
+        </Modal>
+
+        {/* TIME PICKER COMPONENT */}
+        {showTimePicker && (
+             <DateTimePicker 
+                value={showTimePicker === 'start' ? startTime : endTime} 
+                mode="time" 
+                is24Hour={true} 
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={onChangeTime} 
+             />
+        )}
+
       </SafeAreaView>
     </LinearGradient>
   );
@@ -401,7 +464,6 @@ const styles = StyleSheet.create({
   cellHeader: { flexDirection: 'row', justifyContent: 'space-between' },
   solarText: { fontSize: 15, fontWeight: 'bold' },
   lunarText: { fontSize: 9, marginTop: 2 },
-  bottomRightIcon: { position: 'absolute', bottom: 4, right: 4 },
   separator: { height: 20 },
   toolbar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, marginBottom: 15 },
   toolbarTitle: { fontSize: 18, fontWeight: 'bold' },
@@ -409,15 +471,12 @@ const styles = StyleSheet.create({
   switchBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 10 },
   summaryTable: { paddingHorizontal: 15 },
   glassRow: { flexDirection: 'row', padding: 12, marginBottom: 10, borderRadius: 16, alignItems: 'center', borderWidth: 1 },
-  compactRow: { padding: 10, marginBottom: 5, borderRadius: 8, borderWidth: 1 },
+  compactRow: { padding: 15, marginBottom: 5, borderRadius: 12, borderWidth: 1 },
   dateBadge: { width: 45, height: 45, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginRight: 15 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
   modalContent: { width: '100%', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, borderWidth: 1 },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-  singleShiftView: { width: '40%', paddingVertical: 10, borderRadius: 12, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
-  shiftText: { marginTop: 5, fontWeight: 'bold', fontSize: 13 },
-  inputRow: { marginBottom: 10 },
-  inputMulti: { borderWidth: 1, borderRadius: 12, padding: 12, fontSize: 14 },
-  addMoreBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 10, borderStyle: 'dashed', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)', borderRadius: 12, marginTop: 5 },
-  saveBtn: { padding: 16, borderRadius: 16, alignItems: 'center', marginTop: 20 },
+  inputMulti: { borderWidth: 1, borderRadius: 12, padding: 12, fontSize: 16 },
+  saveBtn: { padding: 16, borderRadius: 16, alignItems: 'center', marginTop: 10 },
+  timeBox: { width: '40%', padding: 10, borderRadius: 10, borderWidth: 1, alignItems: 'center' },
 });

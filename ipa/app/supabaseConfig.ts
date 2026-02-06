@@ -3,8 +3,8 @@ import { createClient } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
-const SUPABASE_URL = 'https://mrgsyxgucwochzhbzbrt.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1yZ3N5eGd1Y3dvY2h6aGJ6YnJ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQyMjk3MTUsImV4cCI6MjA3OTgwNTcxNX0.nPuAqdbjXoZ-upuU_LQrv6IVNR_2NMeioquRap-BYcE';
+const SUPABASE_URL = 'https://ykwdxgjzmiduayedykhv.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlrd2R4Z2p6bWlkdWF5ZWR5a2h2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAzMTY4NTUsImV4cCI6MjA4NTg5Mjg1NX0.aw2F-uW4Ei6r68tMcXBD2S46DnTxAo7j07SYYNjJGPM';
 
 // Tèo đã sửa lại kiểu trả về cho đúng chuẩn TypeScript
 const ExpoSecureStoreAdapter = {
