@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { 
   StyleSheet, Text, View, TouchableOpacity, ScrollView, 
-  Modal, TextInput, KeyboardAvoidingView, Platform, Alert, ActivityIndicator
+  Modal, TextInput, KeyboardAvoidingView, Platform, Alert, ActivityIndicator, Keyboard 
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,16 +16,16 @@ import { LinearGradient } from 'expo-linear-gradient';
 import DateTimePicker from '@react-native-community/datetimepicker'; 
 // @ts-ignore
 import { Solar } from 'lunar-javascript';
-import { supabase } from '../supabaseConfig'; // Import Supabase
+import { supabase } from '../supabaseConfig';
 
 // Kiểu dữ liệu
 type WorkLog = {
   id: string;
   date: string; 
-  employeeName: string; // Trong DB là employee_name
-  startTime: string;    // Trong DB là start_time
-  endTime: string;      // Trong DB là end_time
-  durationMinutes: number; // Trong DB là duration_minutes
+  employeeName: string; 
+  startTime: string;    
+  endTime: string;      
+  durationMinutes: number; 
   user_id?: string;
 };
 
@@ -40,7 +40,7 @@ export default function CalendarScreen() {
   const [loading, setLoading] = useState(false);
   const [session, setSession] = useState<any>(null);
 
-  // Modal Nhập Liệu & Chỉnh Sửa
+  // Modal Nhập Liệu
   const [modalVisible, setModalVisible] = useState(false);
   const [editingLogId, setEditingLogId] = useState<string | null>(null);
   const [empName, setEmpName] = useState('');
@@ -63,20 +63,17 @@ export default function CalendarScreen() {
 
   // --- INIT DATA ---
   useEffect(() => {
-    // 1. Kiểm tra session
     supabase.auth.getSession().then(({ data: { session } }) => {
         setSession(session);
         if (session) fetchLogs();
     });
 
-    // 2. Lắng nghe đăng nhập/đăng xuất
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
         setSession(session);
         if (session) fetchLogs();
         else setLogs([]);
     });
 
-    // 3. Realtime Subscription
     const subscription = supabase
       .channel('public:work_logs')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'work_logs' }, () => {
@@ -92,14 +89,9 @@ export default function CalendarScreen() {
 
   const fetchLogs = async () => {
     setLoading(true);
-    const { data, error } = await supabase
-        .from('work_logs')
-        .select('*'); // Lấy hết, RLS sẽ tự lọc user_id
-
-    if (error) {
-        console.log("Lỗi tải logs:", error);
-    } else if (data) {
-        // Map snake_case (DB) -> camelCase (App)
+    const { data, error } = await supabase.from('work_logs').select('*');
+    if (error) console.log("Lỗi tải logs:", error);
+    else if (data) {
         const mappedLogs: WorkLog[] = data.map((item: any) => ({
             id: item.id,
             date: item.date,
@@ -117,7 +109,7 @@ export default function CalendarScreen() {
   // --- LOGIC TÍNH TOÁN ---
   const calculateDuration = (start: Date, end: Date) => {
     let diff = differenceInMinutes(end, start);
-    if (diff < 0) diff += 1440; // Qua đêm
+    if (diff < 0) diff += 1440; 
     return diff;
   };
 
@@ -145,7 +137,6 @@ export default function CalendarScreen() {
 
   // --- HANDLERS ---
   const handlePressDay = (date: Date) => {
-    // Nếu chưa đăng nhập thì nhắc nhở
     if (!session) {
         Alert.alert("Chưa đăng nhập", "Anh hai ơi, vào Cài đặt đăng nhập để chấm công nhé!", [
             { text: "Để sau", style: "cancel" },
@@ -158,6 +149,7 @@ export default function CalendarScreen() {
     setModalVisible(true);
   };
 
+  // [UPDATED] Hàm reset form giờ sẽ đóng luôn cả TimePicker
   const resetForm = () => {
     const now = new Date();
     setEmpName('');
@@ -166,19 +158,25 @@ export default function CalendarScreen() {
     setEndTime(now);
     setWebStartTime(format(now, 'HH:mm'));
     setWebEndTime(format(now, 'HH:mm'));
+    setShowTimePicker(null); // Đóng picker khi reset/lưu xong
+  };
+
+  // [NEW] Hàm mở TimePicker đồng thời ẩn bàn phím
+  const handleOpenTimePicker = (type: 'start' | 'end') => {
+      Keyboard.dismiss(); // Ẩn bàn phím ngay
+      setShowTimePicker(type); // Hiện đồng hồ
   };
 
   const handleStartEdit = (log: WorkLog) => {
     setEditingLogId(log.id);
     setEmpName(log.employeeName);
-    
     const s = parseISO(log.startTime);
     const e = parseISO(log.endTime);
-    
     setStartTime(s);
     setEndTime(e);
     setWebStartTime(format(s, 'HH:mm'));
     setWebEndTime(format(e, 'HH:mm'));
+    setShowTimePicker(null);
   };
 
   const onChangeTime = (event: any, selectedDate?: Date) => {
@@ -207,8 +205,10 @@ export default function CalendarScreen() {
         return;
     }
 
-    if (!session) return; // Chặn nếu chưa login
+    if (!session) return; 
     
+    Keyboard.dismiss(); // Ẩn bàn phím
+
     let finalStart = startTime;
     let finalEnd = endTime;
 
@@ -221,13 +221,10 @@ export default function CalendarScreen() {
     const e = new Date(finalEnd); e.setSeconds(0); e.setMilliseconds(0);
     const duration = calculateDuration(s, e);
     
-    // Đóng modal trước cho mượt
-    setModalVisible(false);
     setLoading(true);
 
     try {
         if (editingLogId) {
-            // UPDATE
             const { error } = await supabase
                 .from('work_logs')
                 .update({
@@ -237,12 +234,8 @@ export default function CalendarScreen() {
                     duration_minutes: duration
                 })
                 .eq('id', editingLogId);
-            
             if (error) throw error;
-            Alert.alert("Thành công", "Đã cập nhật công!");
-
         } else {
-            // INSERT
             const { error } = await supabase
                 .from('work_logs')
                 .insert({
@@ -254,14 +247,13 @@ export default function CalendarScreen() {
                     duration_minutes: duration,
                     user_id: session.user.id
                 });
-
             if (error) throw error;
-            Alert.alert("Thành công", "Đã thêm công mới!");
         }
-        fetchLogs(); // Reload lại cho chắc
+        
+        resetForm(); // Reset form + Đóng TimePicker
+        fetchLogs(); 
     } catch (err: any) {
         Alert.alert("Lỗi lưu", err.message);
-        setModalVisible(true); // Mở lại nếu lỗi
     } finally {
         setLoading(false);
     }
@@ -269,10 +261,8 @@ export default function CalendarScreen() {
 
   const handleDeleteLog = async (id: string) => {
     if (!session) return;
-    
     const deleteAction = async () => {
         setLoading(true);
-        // Optimistic Delete
         const oldLogs = [...logs];
         setLogs(logs.filter(l => l.id !== id));
         if (editingLogId === id) resetForm();
@@ -280,7 +270,7 @@ export default function CalendarScreen() {
         const { error } = await supabase.from('work_logs').delete().eq('id', id);
         if (error) {
             Alert.alert("Lỗi xóa", error.message);
-            setLogs(oldLogs); // Rollback
+            setLogs(oldLogs); 
         }
         setLoading(false);
     };
@@ -313,7 +303,6 @@ export default function CalendarScreen() {
 
   const summaryData = useMemo(() => {
     const monthlyLogs = logs.filter(l => isSameMonth(parseISO(l.date), currentMonth));
-
     if (summaryMode === 'date') {
         const grouped: Record<string, WorkLog[]> = {};
         monthlyLogs.forEach(log => {
@@ -323,9 +312,7 @@ export default function CalendarScreen() {
         });
         const sortedKeys = Object.keys(grouped).sort((a, b) => a.localeCompare(b));
         return sortedKeys.map(dateStr => ({
-            type: 'date',
-            key: dateStr,
-            date: parseISO(dateStr),
+            type: 'date', key: dateStr, date: parseISO(dateStr),
             items: grouped[dateStr].sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
         }));
     } else {
@@ -357,7 +344,6 @@ export default function CalendarScreen() {
               <TouchableOpacity onPress={() => setCurrentMonth(subMonths(currentMonth, 1))}><Ionicons name="chevron-back" size={24} color={colors.text} /></TouchableOpacity>
               <View style={{alignItems:'center'}}>
                 <Text style={[styles.monthTitle, {color: colors.text}]}>Tháng {format(currentMonth, 'MM yyyy')}</Text>
-                {/* Trạng thái Loading / Session */}
                 {loading && <ActivityIndicator size="small" color={colors.primary} style={{marginTop: 5}}/>}
                 {!session && !loading && <Text style={{fontSize: 10, color: colors.subText}}>(Chưa đăng nhập)</Text>}
               </View>
@@ -367,12 +353,11 @@ export default function CalendarScreen() {
             <View style={styles.weekHeaderRow}>
               {weekDays.map((day, index) => {
                 const isSunday = index === 6;
-                const normalDayBg = theme === 'dark' ? 'rgba(56, 189, 248, 0.15)' : '#E0F2FE'; 
-                const normalDayBorder = theme === 'dark' ? 'rgba(56, 189, 248, 0.5)' : '#BAE6FD'; 
                 return (
                   <View key={index} style={[styles.headerCell, {
-                        backgroundColor: isSunday ? (theme === 'dark' ? 'rgba(239, 68, 68, 0.2)' : '#FEE2E2') : normalDayBg, 
-                        borderColor: isSunday ? '#EF4444' : normalDayBorder, borderWidth: 1, borderRadius: 8, marginHorizontal: 2 
+                        backgroundColor: isSunday ? (theme === 'dark' ? 'rgba(239, 68, 68, 0.2)' : '#FEE2E2') : (theme === 'dark' ? 'rgba(56, 189, 248, 0.15)' : '#E0F2FE'), 
+                        borderColor: isSunday ? '#EF4444' : (theme === 'dark' ? 'rgba(56, 189, 248, 0.5)' : '#BAE6FD'), 
+                        borderWidth: 1, borderRadius: 8, marginHorizontal: 2 
                   }]}>
                     <Text style={[styles.weekText, { color: isSunday ? '#EF4444' : (theme === 'dark' ? '#BAE6FD' : '#0369A1') }]}>{day}</Text>
                   </View>
@@ -387,17 +372,14 @@ export default function CalendarScreen() {
                 const dayLogs = getLogsForDay(day);
                 const isToday = isSameDay(day, new Date());
                 const isSelected = selectedDate && isSameDay(day, selectedDate);
-                
                 let cellBg = 'transparent';
                 let currentBorderColor = gridBorderColor;
                 let currentBorderWidth = 0.5;
-
                 if (isSelected) {
                     cellBg = colors.primary + '20'; currentBorderColor = colors.primary; currentBorderWidth = 2;
                 } else if (isToday) {
                     cellBg = theme === 'dark' ? 'rgba(253, 224, 71, 0.15)' : '#FEF9C3'; currentBorderColor = '#F59E0B'; currentBorderWidth = 1;
                 }
-
                 return (
                   <TouchableOpacity key={index} style={[styles.cell, { backgroundColor: cellBg, borderColor: currentBorderColor, borderWidth: currentBorderWidth }]} onPress={() => handlePressDay(day)}>
                     <View style={styles.cellHeader}>
@@ -406,9 +388,7 @@ export default function CalendarScreen() {
                     </View>
                     <View style={{marginTop: 4, flex: 1}}> 
                       {dayLogs.slice(0, 3).map((l, i) => (
-                        <Text key={i} numberOfLines={1} style={{fontSize: 9, color: colors.primary, marginBottom: 1, fontWeight: 'bold'}}>
-                            {l.employeeName}
-                        </Text>
+                        <Text key={i} numberOfLines={1} style={{fontSize: 9, color: colors.primary, marginBottom: 1, fontWeight: 'bold'}}>{l.employeeName}</Text>
                       ))}
                       {dayLogs.length > 3 && <Text style={{fontSize: 8, color: colors.subText}}>...</Text>}
                     </View>
@@ -497,110 +477,92 @@ export default function CalendarScreen() {
                 <TouchableOpacity onPress={() => setModalVisible(false)}><Ionicons name="close" size={24} color={colors.text} /></TouchableOpacity>
               </View>
               
-              <View style={{marginBottom: 10}}>
-                 <Text style={{color: colors.subText, marginBottom: 5, fontSize: 12}}>Tên nhân viên:</Text>
-                 <TextInput 
-                      style={[styles.inputMulti, {backgroundColor: colors.iconBg, color: colors.text, borderColor: colors.border}]} 
-                      placeholder="Nhập tên..." placeholderTextColor={colors.subText}
-                      value={empName} onChangeText={setEmpName} 
-                 />
+              <View style={{flex: 1}}>
+                  {/* PHẦN CỐ ĐỊNH */}
+                  <View>
+                     <Text style={{color: colors.subText, marginBottom: 5, fontSize: 12}}>Tên nhân viên:</Text>
+                     <TextInput 
+                          style={[styles.inputMulti, {backgroundColor: colors.iconBg, color: colors.text, borderColor: colors.border}]} 
+                          placeholder="Nhập tên..." placeholderTextColor={colors.subText}
+                          value={empName} onChangeText={setEmpName} 
+                     />
 
-                 <View style={{flexDirection: 'row', justifyContent: 'space-between', marginTop: 15}}>
-                      {/* GIAO DIỆN CHỌN GIỜ (WEB VS MOBILE) */}
-                      {Platform.OS === 'web' ? (
-                          <>
-                             <View style={[styles.timeBox, {borderColor: colors.border, backgroundColor: colors.iconBg}]}>
-                                <Text style={{color: colors.subText, fontSize: 11}}>Giờ vào</Text>
-                                <TextInput 
-                                   style={{color: colors.primary, fontWeight: 'bold', fontSize: 18, textAlign: 'center', width: '100%'}}
-                                   value={webStartTime} onChangeText={setWebStartTime}
-                                   placeholder="HH:mm" placeholderTextColor={colors.subText}
-                                />
-                             </View>
-                             <View style={{justifyContent:'center'}}><Ionicons name="arrow-forward" color={colors.subText} size={20}/></View>
-                             <View style={[styles.timeBox, {borderColor: colors.border, backgroundColor: colors.iconBg}]}>
-                                <Text style={{color: colors.subText, fontSize: 11}}>Giờ ra</Text>
-                                <TextInput 
-                                   style={{color: colors.primary, fontWeight: 'bold', fontSize: 18, textAlign: 'center', width: '100%'}}
-                                   value={webEndTime} onChangeText={setWebEndTime}
-                                   placeholder="HH:mm" placeholderTextColor={colors.subText}
-                                />
-                             </View>
-                          </>
-                      ) : (
-                          <>
-                             <TouchableOpacity onPress={() => setShowTimePicker('start')} style={[styles.timeBox, {borderColor: colors.border, backgroundColor: colors.iconBg}]}>
-                                <Text style={{color: colors.subText, fontSize: 11}}>Giờ vào</Text>
-                                <Text style={{color: colors.primary, fontWeight: 'bold', fontSize: 18}}>{format(startTime, 'HH:mm')}</Text>
-                             </TouchableOpacity>
-                             <View style={{justifyContent:'center'}}><Ionicons name="arrow-forward" color={colors.subText} size={20}/></View>
-                             <TouchableOpacity onPress={() => setShowTimePicker('end')} style={[styles.timeBox, {borderColor: colors.border, backgroundColor: colors.iconBg}]}>
-                                <Text style={{color: colors.subText, fontSize: 11}}>Giờ ra</Text>
-                                <Text style={{color: colors.primary, fontWeight: 'bold', fontSize: 18}}>{format(endTime, 'HH:mm')}</Text>
-                             </TouchableOpacity>
-                          </>
-                      )}
-                 </View>
+                     <View style={{flexDirection: 'row', justifyContent: 'space-between', marginTop: 15}}>
+                          {/* Dùng handleOpenTimePicker để ẩn bàn phím */}
+                          <TouchableOpacity onPress={() => handleOpenTimePicker('start')} style={[styles.timeBox, {borderColor: colors.border, backgroundColor: colors.iconBg}]}>
+                            <Text style={{color: colors.subText, fontSize: 11}}>Giờ vào</Text>
+                            <Text style={{color: colors.primary, fontWeight: 'bold', fontSize: 18}}>{format(startTime, 'HH:mm')}</Text>
+                          </TouchableOpacity>
+                          <View style={{justifyContent:'center'}}><Ionicons name="arrow-forward" color={colors.subText} size={20}/></View>
+                          <TouchableOpacity onPress={() => handleOpenTimePicker('end')} style={[styles.timeBox, {borderColor: colors.border, backgroundColor: colors.iconBg}]}>
+                            <Text style={{color: colors.subText, fontSize: 11}}>Giờ ra</Text>
+                            <Text style={{color: colors.primary, fontWeight: 'bold', fontSize: 18}}>{format(endTime, 'HH:mm')}</Text>
+                          </TouchableOpacity>
+                     </View>
 
-                 {showTimePicker && Platform.OS !== 'web' && (
-                     <View style={{marginTop: 20, alignItems: 'center'}}>
-                         <DateTimePicker 
-                            value={showTimePicker === 'start' ? startTime : endTime} 
-                            mode="time" is24Hour={true} 
-                            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                            onChange={onChangeTime} 
-                            style={{width: '100%', height: 120}}
-                         />
-                         {Platform.OS === 'ios' && (
-                             <TouchableOpacity onPress={() => setShowTimePicker(null)} style={{marginTop: 10, paddingVertical: 8, paddingHorizontal: 30, backgroundColor: colors.iconBg, borderRadius: 20}}>
-                                <Text style={{color: colors.primary, fontWeight: 'bold'}}>Xong</Text>
+                     {showTimePicker && Platform.OS !== 'web' && (
+                         <View style={{marginTop: 20, alignItems: 'center'}}>
+                             <DateTimePicker 
+                                value={showTimePicker === 'start' ? startTime : endTime} 
+                                mode="time" is24Hour={true} 
+                                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                                onChange={onChangeTime} 
+                                style={{width: '100%', height: 120}}
+                             />
+                             {Platform.OS === 'ios' && (
+                                 <TouchableOpacity onPress={() => setShowTimePicker(null)} style={{marginTop: 10, paddingVertical: 8, paddingHorizontal: 30, backgroundColor: colors.iconBg, borderRadius: 20}}>
+                                    <Text style={{color: colors.primary, fontWeight: 'bold'}}>Xong</Text>
+                                 </TouchableOpacity>
+                             )}
+                         </View>
+                     )}
+                     
+                     <View style={{flexDirection: 'row', marginTop: 10, gap: 10}}>
+                         {editingLogId && (
+                             <TouchableOpacity style={[styles.saveBtn, {backgroundColor: colors.iconBg, flex: 1}]} onPress={resetForm}>
+                                <Text style={{color: colors.text, fontWeight: 'bold'}}>Hủy sửa</Text>
                              </TouchableOpacity>
                          )}
-                     </View>
-                 )}
-                 
-                 <View style={{flexDirection: 'row', marginTop: 10, gap: 10}}>
-                     {editingLogId && (
-                         <TouchableOpacity style={[styles.saveBtn, {backgroundColor: colors.iconBg, flex: 1}]} onPress={resetForm}>
-                            <Text style={{color: colors.text, fontWeight: 'bold'}}>Hủy sửa</Text>
+                         <TouchableOpacity style={[styles.saveBtn, {backgroundColor: colors.primary, flex: 2}]} onPress={handleSaveLog}>
+                            {loading ? <ActivityIndicator color="white"/> : <Text style={{color: 'white', fontWeight: 'bold'}}>{editingLogId ? 'Cập nhật' : 'Lưu / Thêm'}</Text>}
                          </TouchableOpacity>
-                     )}
-                     <TouchableOpacity style={[styles.saveBtn, {backgroundColor: colors.primary, flex: 2}]} onPress={handleSaveLog}>
-                        {loading ? <ActivityIndicator color="white"/> : <Text style={{color: 'white', fontWeight: 'bold'}}>{editingLogId ? 'Cập nhật' : 'Lưu chấm công'}</Text>}
-                     </TouchableOpacity>
-                 </View>
-
-                 {selectedDate && getLogsForDay(selectedDate).length > 0 && (
-                     <View style={{marginTop: 20, paddingTop: 10, borderTopWidth: 1, borderTopColor: colors.border, maxHeight: 150}}>
-                         <Text style={{color: colors.subText, fontSize: 12, marginBottom: 5}}>Danh sách (Chạm vào tên để sửa):</Text>
-                         <ScrollView nestedScrollEnabled>
-                            {getLogsForDay(selectedDate).map((l, i) => {
-                                const isEditing = l.id === editingLogId;
-                                return (
-                                    <View key={i} style={{
-                                        flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', 
-                                        marginBottom: 8, padding: 8, 
-                                        backgroundColor: isEditing ? colors.primary + '20' : colors.bg, 
-                                        borderRadius: 8,
-                                        borderWidth: isEditing ? 1 : 0, borderColor: colors.primary
-                                    }}>
-                                        <TouchableOpacity style={{flex: 1}} onPress={() => handleStartEdit(l)}>
-                                            <View>
-                                                <Text style={{color: colors.text, fontWeight: 'bold'}}>{l.employeeName} {isEditing ? '(Đang sửa)' : ''}</Text>
-                                                <Text style={{color: colors.subText, fontSize: 11}}>
-                                                    {format(parseISO(l.startTime), 'HH:mm')} - {format(parseISO(l.endTime), 'HH:mm')} ({formatDuration(l.durationMinutes)})
-                                                </Text>
-                                            </View>
-                                        </TouchableOpacity>
-                                        <TouchableOpacity onPress={() => handleDeleteLog(l.id)} style={{padding: 8}}>
-                                            <Ionicons name="trash" size={20} color={colors.error}/>
-                                        </TouchableOpacity>
-                                    </View>
-                                );
-                            })}
-                         </ScrollView>
                      </View>
-                 )}
+                  </View>
+
+                  {/* PHẦN DANH SÁCH CUỘN */}
+                  <View style={{flex: 1, marginTop: 15, borderTopWidth: 1, borderTopColor: colors.border}}>
+                       <Text style={{color: colors.subText, fontSize: 12, marginVertical: 8}}>Danh sách (Chạm vào tên để sửa):</Text>
+                       <ScrollView nestedScrollEnabled contentContainerStyle={{paddingBottom: 20}}>
+                          {selectedDate && getLogsForDay(selectedDate).length > 0 ? (
+                              getLogsForDay(selectedDate).map((l, i) => {
+                                  const isEditing = l.id === editingLogId;
+                                  return (
+                                      <View key={i} style={{
+                                          flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', 
+                                          marginBottom: 8, padding: 8, 
+                                          backgroundColor: isEditing ? colors.primary + '20' : colors.bg, 
+                                          borderRadius: 8,
+                                          borderWidth: isEditing ? 1 : 0, borderColor: colors.primary
+                                      }}>
+                                          <TouchableOpacity style={{flex: 1}} onPress={() => handleStartEdit(l)}>
+                                              <View>
+                                                  <Text style={{color: colors.text, fontWeight: 'bold'}}>{l.employeeName} {isEditing ? '(Đang sửa)' : ''}</Text>
+                                                  <Text style={{color: colors.subText, fontSize: 11}}>
+                                                      {format(parseISO(l.startTime), 'HH:mm')} - {format(parseISO(l.endTime), 'HH:mm')} ({formatDuration(l.durationMinutes)})
+                                                  </Text>
+                                              </View>
+                                          </TouchableOpacity>
+                                          <TouchableOpacity onPress={() => handleDeleteLog(l.id)} style={{padding: 8}}>
+                                              <Ionicons name="trash" size={20} color={colors.error}/>
+                                          </TouchableOpacity>
+                                      </View>
+                                  );
+                              })
+                          ) : (
+                              <Text style={{textAlign:'center', color: colors.subText, fontStyle:'italic', marginTop: 10}}>Chưa có nhân viên nào.</Text>
+                          )}
+                       </ScrollView>
+                  </View>
               </View>
             </View>
           </KeyboardAvoidingView>
@@ -648,7 +610,6 @@ export default function CalendarScreen() {
   );
 }
 
-// Styles giữ nguyên
 const styles = StyleSheet.create({
   calendarContainer: { marginHorizontal: 10, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.02)', borderWidth: 0, paddingBottom: 5 },
   monthNav: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 15 },
@@ -671,7 +632,7 @@ const styles = StyleSheet.create({
   compactRow: { padding: 15, marginBottom: 5, borderRadius: 12, borderWidth: 1 },
   dateBadge: { width: 45, height: 45, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginRight: 15 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
-  modalContent: { width: '100%', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, borderWidth: 1 },
+  modalContent: { width: '100%', height: '85%', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, borderWidth: 1 },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
   inputMulti: { borderWidth: 1, borderRadius: 12, padding: 12, fontSize: 16 },
   saveBtn: { padding: 16, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
