@@ -1,57 +1,43 @@
 // File: scripts/setup-db.js
 const { Client } = require('pg');
 
-// 👇 DÁN CHUỖI MỚI (CÓ CHỮ .pooler.supabase.com) VÀO ĐÂY
-// Nhớ điền mật khẩu của anh vào chỗ [YOUR-PASSWORD] nhé
+// Chuỗi kết nối Pooler của anh
 const connectionString = 'postgresql://postgres.ykwdxgjzmiduayedykhv:Nguyenthanhduong1511@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres';
-
-// ⚠️ Nếu anh không tìm thấy link Pooler, thử đổi "db.ykw..." thành "aws-0-ap-southeast-1.pooler.supabase.com"
-// và port 5432 thành 6543 xem sao (Tèo đoán server anh ở Sing - ap-southeast-1).
 
 const client = new Client({
   connectionString: connectionString,
-  ssl: { rejectUnauthorized: false } // Quan trọng khi chạy từ local/codespace
+  ssl: { rejectUnauthorized: false }
 });
 
-const createTablesQuery = `
-  CREATE TABLE IF NOT EXISTS public.notes (
-    id text PRIMARY KEY,
-    title text,
-    content text,
-    date text,
-    is_pinned boolean DEFAULT false,
-    created_at timestamp with time zone DEFAULT timezone('utc'::text, now()),
-    user_id uuid DEFAULT auth.uid()
+const createSheetTableQuery = `
+  -- 1. TẠO BẢNG CẤU HÌNH SHEETS
+  CREATE TABLE IF NOT EXISTS public.sheet_configs (
+    user_id uuid PRIMARY KEY DEFAULT auth.uid(), -- Mỗi user chỉ có 1 dòng cấu hình duy nhất
+    webhook_url text,
+    sheet_link text,
+    text_data jsonb DEFAULT '[]'::jsonb,   -- Lưu mảng các ô text
+    image_data jsonb DEFAULT '[]'::jsonb,  -- Lưu mảng các ô ảnh (chỉ lưu vị trí, ko lưu ảnh)
+    updated_at timestamp with time zone DEFAULT timezone('utc'::text, now())
   );
 
-  CREATE TABLE IF NOT EXISTS public.reminders (
-    id text PRIMARY KEY,
-    title text,
-    content text,
-    date_time text,
-    created_at timestamp with time zone DEFAULT timezone('utc'::text, now()),
-    user_id uuid DEFAULT auth.uid()
-  );
+  -- 2. BẬT BẢO MẬT (RLS)
+  ALTER TABLE public.sheet_configs ENABLE ROW LEVEL SECURITY;
 
-  ALTER TABLE public.notes ENABLE ROW LEVEL SECURITY;
-  ALTER TABLE public.reminders ENABLE ROW LEVEL SECURITY;
-
-  DROP POLICY IF EXISTS "User can manage their own notes" ON public.notes;
-  CREATE POLICY "User can manage their own notes" ON public.notes
-    FOR ALL USING (auth.uid() = user_id);
-
-  DROP POLICY IF EXISTS "User can manage their own reminders" ON public.reminders;
-  CREATE POLICY "User can manage their own reminders" ON public.reminders
+  -- 3. TẠO POLICY (Ai quản lý cấu hình người nấy)
+  DROP POLICY IF EXISTS "User can manage their own sheet config" ON public.sheet_configs;
+  CREATE POLICY "User can manage their own sheet config" ON public.sheet_configs
     FOR ALL USING (auth.uid() = user_id);
 `;
 
-async function setupDatabase() {
+async function setupSheetDB() {
   try {
-    console.log("⏳ Đang kết nối tới Supabase (qua Pooler)...");
+    console.log("⏳ Đang kết nối tới Supabase...");
     await client.connect();
-    console.log("🚀 Đang khởi tạo bảng...");
-    await client.query(createTablesQuery);
-    console.log("✅ Ngon lành cành đào! Bảng đã được tạo.");
+    
+    console.log("🚀 Đang tạo bảng sheet_configs...");
+    await client.query(createSheetTableQuery);
+    
+    console.log("✅ Xong phim! Bảng cấu hình Sheet đã sẵn sàng.");
   } catch (err) {
     console.error("❌ Lỗi:", err);
   } finally {
@@ -59,4 +45,4 @@ async function setupDatabase() {
   }
 }
 
-setupDatabase();
+setupSheetDB();

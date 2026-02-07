@@ -1,7 +1,7 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { 
   StyleSheet, Text, View, TouchableOpacity, ScrollView, 
-  Modal, TextInput, KeyboardAvoidingView, Platform, Alert 
+  Modal, TextInput, KeyboardAvoidingView, Platform, Alert, ActivityIndicator
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,35 +10,39 @@ import {
   eachDayOfInterval, addMonths, subMonths, isSameDay, isSameMonth, 
   differenceInMinutes, parseISO, setHours, setMinutes 
 } from 'date-fns';
-import { useFocusEffect } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { LinearGradient } from 'expo-linear-gradient';
 import DateTimePicker from '@react-native-community/datetimepicker'; 
 // @ts-ignore
 import { Solar } from 'lunar-javascript';
+import { supabase } from '../supabaseConfig'; // Import Supabase
 
 // Kiểu dữ liệu
 type WorkLog = {
   id: string;
   date: string; 
-  employeeName: string;
-  startTime: string;
-  endTime: string;
-  durationMinutes: number;
+  employeeName: string; // Trong DB là employee_name
+  startTime: string;    // Trong DB là start_time
+  endTime: string;      // Trong DB là end_time
+  durationMinutes: number; // Trong DB là duration_minutes
+  user_id?: string;
 };
 
 export default function CalendarScreen() {
   const { colors, theme } = useTheme();
+  const router = useRouter();
   
   // --- STATE ---
   const [currentMonth, setCurrentMonth] = useState(new Date()); 
   const [selectedDate, setSelectedDate] = useState<Date | null>(null); 
   const [logs, setLogs] = useState<WorkLog[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [session, setSession] = useState<any>(null);
 
   // Modal Nhập Liệu & Chỉnh Sửa
   const [modalVisible, setModalVisible] = useState(false);
-  const [editingLogId, setEditingLogId] = useState<string | null>(null); // ID dòng đang sửa
+  const [editingLogId, setEditingLogId] = useState<string | null>(null);
   const [empName, setEmpName] = useState('');
   const [startTime, setStartTime] = useState(new Date());
   const [endTime, setEndTime] = useState(new Date());
@@ -50,29 +54,64 @@ export default function CalendarScreen() {
   // State Picker Mobile
   const [showTimePicker, setShowTimePicker] = useState<'start' | 'end' | null>(null);
 
-  // Modal Chi Tiết Tổng Hợp
+  // Modal Chi Tiết
   const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [selectedEmpDetail, setSelectedEmpDetail] = useState<string | null>(null);
 
   // Chế độ xem tổng hợp
   const [summaryMode, setSummaryMode] = useState<'date' | 'employee'>('date');
 
-  // Load Data
-  useFocusEffect(
-    useCallback(() => {
-      const loadData = async () => {
-        try {
-          const savedLogs = await AsyncStorage.getItem('TIMEKEEPING_LOGS');
-          if (savedLogs) setLogs(JSON.parse(savedLogs));
-        } catch (e) { console.log('Lỗi load:', e); }
-      };
-      loadData();
-    }, [])
-  );
+  // --- INIT DATA ---
+  useEffect(() => {
+    // 1. Kiểm tra session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+        setSession(session);
+        if (session) fetchLogs();
+    });
 
-  const saveLogs = async (newLogs: WorkLog[]) => {
-    setLogs(newLogs);
-    await AsyncStorage.setItem('TIMEKEEPING_LOGS', JSON.stringify(newLogs));
+    // 2. Lắng nghe đăng nhập/đăng xuất
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+        setSession(session);
+        if (session) fetchLogs();
+        else setLogs([]);
+    });
+
+    // 3. Realtime Subscription
+    const subscription = supabase
+      .channel('public:work_logs')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'work_logs' }, () => {
+          fetchLogs();
+      })
+      .subscribe();
+
+    return () => {
+        authListener.subscription.unsubscribe();
+        supabase.removeChannel(subscription);
+    };
+  }, []);
+
+  const fetchLogs = async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+        .from('work_logs')
+        .select('*'); // Lấy hết, RLS sẽ tự lọc user_id
+
+    if (error) {
+        console.log("Lỗi tải logs:", error);
+    } else if (data) {
+        // Map snake_case (DB) -> camelCase (App)
+        const mappedLogs: WorkLog[] = data.map((item: any) => ({
+            id: item.id,
+            date: item.date,
+            employeeName: item.employee_name,
+            startTime: item.start_time,
+            endTime: item.end_time,
+            durationMinutes: item.duration_minutes,
+            user_id: item.user_id
+        }));
+        setLogs(mappedLogs);
+    }
+    setLoading(false);
   };
 
   // --- LOGIC TÍNH TOÁN ---
@@ -106,6 +145,14 @@ export default function CalendarScreen() {
 
   // --- HANDLERS ---
   const handlePressDay = (date: Date) => {
+    // Nếu chưa đăng nhập thì nhắc nhở
+    if (!session) {
+        Alert.alert("Chưa đăng nhập", "Anh hai ơi, vào Cài đặt đăng nhập để chấm công nhé!", [
+            { text: "Để sau", style: "cancel" },
+            { text: "Đi ngay", onPress: () => router.push('/(tabs)/settings') }
+        ]);
+        return;
+    }
     setSelectedDate(date);
     resetForm();
     setModalVisible(true);
@@ -114,14 +161,13 @@ export default function CalendarScreen() {
   const resetForm = () => {
     const now = new Date();
     setEmpName('');
-    setEditingLogId(null); // Reset trạng thái sửa
+    setEditingLogId(null);
     setStartTime(now);
     setEndTime(now);
     setWebStartTime(format(now, 'HH:mm'));
     setWebEndTime(format(now, 'HH:mm'));
   };
 
-  // KHI BẤM VÀO TÊN NHÂN VIÊN ĐỂ SỬA
   const handleStartEdit = (log: WorkLog) => {
     setEditingLogId(log.id);
     setEmpName(log.employeeName);
@@ -135,19 +181,15 @@ export default function CalendarScreen() {
     setWebEndTime(format(e, 'HH:mm'));
   };
 
-  // Chọn giờ Mobile
   const onChangeTime = (event: any, selectedDate?: Date) => {
     const type = showTimePicker;
-    // Trên Android thì tắt luôn sau khi chọn, iOS thì không tắt để còn bấm Xong
     if(Platform.OS === 'android') setShowTimePicker(null);
-    
     if (selectedDate && type) {
         if (type === 'start') setStartTime(selectedDate);
         else setEndTime(selectedDate);
     }
   };
 
-  // Parse giờ Web
   const parseTimeFromText = (timeStr: string, originalDate: Date) => {
     try {
         const [hours, minutes] = timeStr.split(':').map(Number);
@@ -158,15 +200,15 @@ export default function CalendarScreen() {
     return originalDate;
   };
 
-  // HÀM LƯU (XỬ LÝ CẢ THÊM MỚI VÀ CẬP NHẬT)
-  const handleSaveLog = () => {
+  // --- XỬ LÝ LƯU DB ---
+  const handleSaveLog = async () => {
     if (!empName.trim() || !selectedDate) {
-        if (Platform.OS === 'web') alert("Thiếu tên nhân viên kìa anh hai!");
-        else Alert.alert("Thiếu tên", "Nhập tên nhân viên đi anh hai!");
+        Alert.alert("Thiếu thông tin", "Nhập tên nhân viên đi anh hai!");
         return;
     }
+
+    if (!session) return; // Chặn nếu chưa login
     
-    // Xử lý giờ
     let finalStart = startTime;
     let finalEnd = endTime;
 
@@ -175,52 +217,72 @@ export default function CalendarScreen() {
         finalEnd = parseTimeFromText(webEndTime, endTime);
     }
 
-    // Làm tròn giây
     const s = new Date(finalStart); s.setSeconds(0); s.setMilliseconds(0);
     const e = new Date(finalEnd); e.setSeconds(0); e.setMilliseconds(0);
-    
     const duration = calculateDuration(s, e);
     
-    if (editingLogId) {
-        // --- LOGIC CẬP NHẬT (UPDATE) ---
-        const updatedLogs = logs.map(log => {
-            if (log.id === editingLogId) {
-                return {
-                    ...log,
-                    employeeName: empName.trim(),
-                    startTime: s.toISOString(),
-                    endTime: e.toISOString(),
-                    durationMinutes: duration
-                };
-            }
-            return log;
-        });
-        saveLogs(updatedLogs);
-        if(Platform.OS === 'web') alert("Đã cập nhật xong!");
-        else Alert.alert("Thành công", "Đã cập nhật thông tin!");
+    // Đóng modal trước cho mượt
+    setModalVisible(false);
+    setLoading(true);
 
-    } else {
-        // --- LOGIC THÊM MỚI (ADD) ---
-        const newLog: WorkLog = {
-          id: Date.now().toString(),
-          date: selectedDate.toISOString(),
-          employeeName: empName.trim(),
-          startTime: s.toISOString(),
-          endTime: e.toISOString(),
-          durationMinutes: duration
-        };
-        saveLogs([...logs, newLog]);
-        if(Platform.OS === 'web') alert("Đã lưu thành công!");
-        else Alert.alert("Thành công", "Đã thêm mới!");
+    try {
+        if (editingLogId) {
+            // UPDATE
+            const { error } = await supabase
+                .from('work_logs')
+                .update({
+                    employee_name: empName.trim(),
+                    start_time: s.toISOString(),
+                    end_time: e.toISOString(),
+                    duration_minutes: duration
+                })
+                .eq('id', editingLogId);
+            
+            if (error) throw error;
+            Alert.alert("Thành công", "Đã cập nhật công!");
+
+        } else {
+            // INSERT
+            const { error } = await supabase
+                .from('work_logs')
+                .insert({
+                    id: Date.now().toString(),
+                    date: selectedDate.toISOString(),
+                    employee_name: empName.trim(),
+                    start_time: s.toISOString(),
+                    end_time: e.toISOString(),
+                    duration_minutes: duration,
+                    user_id: session.user.id
+                });
+
+            if (error) throw error;
+            Alert.alert("Thành công", "Đã thêm công mới!");
+        }
+        fetchLogs(); // Reload lại cho chắc
+    } catch (err: any) {
+        Alert.alert("Lỗi lưu", err.message);
+        setModalVisible(true); // Mở lại nếu lỗi
+    } finally {
+        setLoading(false);
     }
-
-    resetForm(); // Reset form về trạng thái thêm mới
   };
 
-  const handleDeleteLog = (id: string) => {
-    const deleteAction = () => {
-        saveLogs(logs.filter(l => l.id !== id));
-        if (editingLogId === id) resetForm(); // Nếu đang sửa dòng này mà xóa thì reset luôn
+  const handleDeleteLog = async (id: string) => {
+    if (!session) return;
+    
+    const deleteAction = async () => {
+        setLoading(true);
+        // Optimistic Delete
+        const oldLogs = [...logs];
+        setLogs(logs.filter(l => l.id !== id));
+        if (editingLogId === id) resetForm();
+
+        const { error } = await supabase.from('work_logs').delete().eq('id', id);
+        if (error) {
+            Alert.alert("Lỗi xóa", error.message);
+            setLogs(oldLogs); // Rollback
+        }
+        setLoading(false);
     };
 
     if (Platform.OS === 'web') {
@@ -238,7 +300,7 @@ export default function CalendarScreen() {
     setDetailModalVisible(true);
   };
 
-  // --- DATA PROCESSING ---
+  // --- VIEW HELPERS ---
   const getLogsForDay = (date: Date) => logs.filter(l => isSameDay(parseISO(l.date), date));
 
   const getDetailLogs = () => {
@@ -253,7 +315,6 @@ export default function CalendarScreen() {
     const monthlyLogs = logs.filter(l => isSameMonth(parseISO(l.date), currentMonth));
 
     if (summaryMode === 'date') {
-        // Sort Date: 1->31
         const grouped: Record<string, WorkLog[]> = {};
         monthlyLogs.forEach(log => {
             const d = format(parseISO(log.date), 'yyyy-MM-dd'); 
@@ -268,7 +329,6 @@ export default function CalendarScreen() {
             items: grouped[dateStr].sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
         }));
     } else {
-        // Sort Name: A->Z
         const grouped: Record<string, number> = {};
         monthlyLogs.forEach(log => {
             grouped[log.employeeName] = (grouped[log.employeeName] || 0) + log.durationMinutes;
@@ -295,7 +355,12 @@ export default function CalendarScreen() {
           <View style={[styles.calendarContainer, { borderColor: gridBorderColor }]}>
             <View style={styles.monthNav}>
               <TouchableOpacity onPress={() => setCurrentMonth(subMonths(currentMonth, 1))}><Ionicons name="chevron-back" size={24} color={colors.text} /></TouchableOpacity>
-              <Text style={[styles.monthTitle, {color: colors.text}]}>Tháng {format(currentMonth, 'MM yyyy')}</Text>
+              <View style={{alignItems:'center'}}>
+                <Text style={[styles.monthTitle, {color: colors.text}]}>Tháng {format(currentMonth, 'MM yyyy')}</Text>
+                {/* Trạng thái Loading / Session */}
+                {loading && <ActivityIndicator size="small" color={colors.primary} style={{marginTop: 5}}/>}
+                {!session && !loading && <Text style={{fontSize: 10, color: colors.subText}}>(Chưa đăng nhập)</Text>}
+              </View>
               <TouchableOpacity onPress={() => setCurrentMonth(addMonths(currentMonth, 1))}><Ionicons name="chevron-forward" size={24} color={colors.text} /></TouchableOpacity>
             </View>
             
@@ -340,7 +405,6 @@ export default function CalendarScreen() {
                       <Text style={[styles.lunarText, {color: colors.subText}, lunarInfo.isFirstDay && {color: '#EF4444', fontWeight: 'bold'}]}>{lunarInfo.text}</Text>
                     </View>
                     <View style={{marginTop: 4, flex: 1}}> 
-                      {/* --- ĐÃ SỬA: CHỈ HIỂN THỊ TÊN, BỎ THỜI GIAN --- */}
                       {dayLogs.slice(0, 3).map((l, i) => (
                         <Text key={i} numberOfLines={1} style={{fontSize: 9, color: colors.primary, marginBottom: 1, fontWeight: 'bold'}}>
                             {l.employeeName}
@@ -357,7 +421,7 @@ export default function CalendarScreen() {
           {/* BẢNG TỔNG HỢP */}
           <View style={styles.separator} />
           <View style={styles.toolbar}>
-             <Text style={[styles.toolbarTitle, {color: colors.text}]}>Tổng Hợp Tháng</Text>
+             <Text style={[styles.toolbarTitle, {color: colors.text}]}>Tổng Hợp</Text>
              <View style={[styles.switchContainer, {backgroundColor: colors.iconBg}]}>
                 <TouchableOpacity style={[styles.switchBtn, summaryMode === 'date' && {backgroundColor: colors.card}]} onPress={() => setSummaryMode('date')}>
                   <Text style={{color: summaryMode === 'date' ? colors.primary : colors.subText, fontWeight:'bold'}}>Ngày</Text>
@@ -370,7 +434,10 @@ export default function CalendarScreen() {
 
           <View style={styles.summaryTable}>
             {summaryData.length === 0 ? (
-                <Text style={{textAlign: 'center', color: colors.subText, fontStyle: 'italic', marginTop: 20}}>Chưa có dữ liệu chấm công.</Text>
+                <View style={{alignItems:'center', marginTop: 20}}>
+                    {!session && <Text style={{color: colors.error, marginBottom: 5}}>Bạn chưa đăng nhập</Text>}
+                    <Text style={{textAlign: 'center', color: colors.subText, fontStyle: 'italic'}}>Chưa có dữ liệu chấm công.</Text>
+                </View>
             ) : (
                 summaryData.map((item: any, idx) => {
                     if (summaryMode === 'date') {
@@ -475,7 +542,6 @@ export default function CalendarScreen() {
                       )}
                  </View>
 
-                 {/* --- TIME PICKER ĐÃ ĐƯỢC ĐƯA VÀO TRONG MODAL --- */}
                  {showTimePicker && Platform.OS !== 'web' && (
                      <View style={{marginTop: 20, alignItems: 'center'}}>
                          <DateTimePicker 
@@ -485,21 +551,13 @@ export default function CalendarScreen() {
                             onChange={onChangeTime} 
                             style={{width: '100%', height: 120}}
                          />
-                         
                          {Platform.OS === 'ios' && (
-                             <TouchableOpacity 
-                                onPress={() => setShowTimePicker(null)}
-                                style={{
-                                    marginTop: 10, paddingVertical: 8, paddingHorizontal: 30, 
-                                    backgroundColor: colors.iconBg, borderRadius: 20
-                                }}
-                             >
+                             <TouchableOpacity onPress={() => setShowTimePicker(null)} style={{marginTop: 10, paddingVertical: 8, paddingHorizontal: 30, backgroundColor: colors.iconBg, borderRadius: 20}}>
                                 <Text style={{color: colors.primary, fontWeight: 'bold'}}>Xong</Text>
                              </TouchableOpacity>
                          )}
                      </View>
                  )}
-                 {/* ------------------------------------------------ */}
                  
                  <View style={{flexDirection: 'row', marginTop: 10, gap: 10}}>
                      {editingLogId && (
@@ -508,11 +566,10 @@ export default function CalendarScreen() {
                          </TouchableOpacity>
                      )}
                      <TouchableOpacity style={[styles.saveBtn, {backgroundColor: colors.primary, flex: 2}]} onPress={handleSaveLog}>
-                        <Text style={{color: 'white', fontWeight: 'bold'}}>{editingLogId ? 'Cập nhật' : 'Lưu / Thêm'}</Text>
+                        {loading ? <ActivityIndicator color="white"/> : <Text style={{color: 'white', fontWeight: 'bold'}}>{editingLogId ? 'Cập nhật' : 'Lưu chấm công'}</Text>}
                      </TouchableOpacity>
                  </View>
 
-                 {/* DANH SÁCH LOG TRONG NGÀY (CÓ THỂ BẤM VÀO ĐỂ SỬA) */}
                  {selectedDate && getLogsForDay(selectedDate).length > 0 && (
                      <View style={{marginTop: 20, paddingTop: 10, borderTopWidth: 1, borderTopColor: colors.border, maxHeight: 150}}>
                          <Text style={{color: colors.subText, fontSize: 12, marginBottom: 5}}>Danh sách (Chạm vào tên để sửa):</Text>
@@ -591,6 +648,7 @@ export default function CalendarScreen() {
   );
 }
 
+// Styles giữ nguyên
 const styles = StyleSheet.create({
   calendarContainer: { marginHorizontal: 10, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.02)', borderWidth: 0, paddingBottom: 5 },
   monthNav: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 15 },

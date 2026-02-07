@@ -1,86 +1,117 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { 
   StyleSheet, Text, View, TouchableOpacity, FlatList, Modal, TextInput, 
-  Platform, KeyboardAvoidingView, ScrollView, Animated, Keyboard, LayoutAnimation, UIManager 
+  Platform, KeyboardAvoidingView, ScrollView, Animated, Keyboard, LayoutAnimation, UIManager, Alert, ActivityIndicator 
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../context/ThemeContext';
 import { GestureHandlerRootView, Swipeable, RectButton } from 'react-native-gesture-handler';
 import * as WebBrowser from 'expo-web-browser';
-import { useFocusEffect } from 'expo-router';
+import { supabase } from '../supabaseConfig'; // Import Supabase
+import { useRouter } from 'expo-router'; // Dùng để nhảy sang tab Settings nếu cần
 
-// Kích hoạt LayoutAnimation cho Android để list nhảy mượt hơn
-if (Platform.OS === 'android') {
-  if (UIManager.setLayoutAnimationEnabledExperimental) {
-    UIManager.setLayoutAnimationEnabledExperimental(true);
-  }
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
+// Kiểu dữ liệu
 type QuickNote = {
   id: string;
   title: string;
   content: string;
   date: string;
-  isPinned?: boolean; // [MỚI] Thêm trạng thái ghim
+  isPinned: boolean; 
+  user_id?: string;
 };
 
 export default function NotesScreen() {
   const { colors } = useTheme();
+  const router = useRouter();
   const [notes, setNotes] = useState<QuickNote[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [session, setSession] = useState<any>(null); // Lưu trạng thái đăng nhập
+  
+  // State cho Modal Sửa/Thêm
   const [modalVisible, setModalVisible] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
-  
   const [searchQuery, setSearchQuery] = useState('');
 
   const rowRefs = useRef<Map<string, Swipeable>>(new Map());
 
-  useFocusEffect(
-    useCallback(() => {
-      loadNotes();
-    }, [])
-  );
+  useEffect(() => {
+    // 1. Kiểm tra ngay xem đã đăng nhập bên Settings chưa
+    checkSessionAndFetch();
 
-  const loadNotes = async () => {
-    try {
-      const data = await AsyncStorage.getItem('QUICK_NOTES');
-      if (data) {
-          let loadedNotes = JSON.parse(data);
-          // Sắp xếp lại khi load để đảm bảo pin luôn ở đầu
-          loadedNotes = sortNotes(loadedNotes);
-          setNotes(loadedNotes);
-      }
-    } catch (e) {}
+    // 2. Lắng nghe thay đổi (Ví dụ: Đang ở tab này mà logout bên kia, hoặc login xong quay lại)
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+        setSession(session);
+        if (session) {
+            fetchNotes(); // Có mạng, có user -> Tải ngay
+        } else {
+            setNotes([]); // Mất user -> Xóa trắng danh sách để bảo mật
+        }
+    });
+
+    // 3. Đăng ký Realtime (Người khác sửa -> Mình thấy ngay)
+    const subscription = supabase
+      .channel('public:notes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notes' }, () => {
+          fetchNotes(); // DB thay đổi -> Tải lại danh sách
+      })
+      .subscribe();
+
+    return () => { 
+        authListener.subscription.unsubscribe();
+        supabase.removeChannel(subscription); 
+    };
+  }, []);
+
+  const checkSessionAndFetch = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      setSession(session);
+      if (session) fetchNotes();
   };
 
-  // [MỚI] Hàm sắp xếp: Đưa Pinned lên đầu
-  const sortNotes = (list: QuickNote[]) => {
-      return list.sort((a, b) => {
-          // Nếu a ghim mà b không ghim -> a lên trước (-1)
-          if (a.isPinned && !b.isPinned) return -1;
-          // Nếu b ghim mà a không ghim -> b lên trước (1)
-          if (!a.isPinned && b.isPinned) return 1;
-          // Còn lại giữ nguyên thứ tự (hoặc theo ngày nếu muốn)
-          return 0;
-      });
-  };
+  const fetchNotes = async () => {
+    setLoading(true);
+    // Lấy dữ liệu của chính user đang đăng nhập (nhờ Policy RLS đã cài)
+    const { data, error } = await supabase
+      .from('notes')
+      .select('*')
+      .order('is_pinned', { ascending: false })
+      .order('created_at', { ascending: false });
 
-  const saveNotes = async (newNotes: QuickNote[]) => {
-    try {
-      // Luôn sắp xếp trước khi lưu
-      const sortedNotes = sortNotes(newNotes);
-      await AsyncStorage.setItem('QUICK_NOTES', JSON.stringify(sortedNotes));
+    if (error) {
+      console.log("Lỗi tải note:", error);
+    } else if (data) {
+      // Map dữ liệu từ DB (snake_case) sang App (camelCase)
+      const mappedNotes: QuickNote[] = data.map((item: any) => ({
+        id: item.id,
+        title: item.title,
+        content: item.content,
+        date: item.date,
+        isPinned: item.is_pinned,
+        user_id: item.user_id
+      }));
       
-      // Hiệu ứng chuyển động mượt mà
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-      setNotes(sortedNotes);
-    } catch (e) {}
+      setNotes(mappedNotes);
+    }
+    setLoading(false);
   };
 
   const handleOpenModal = (note?: QuickNote) => {
+    if (!session) {
+        Alert.alert("Chưa đăng nhập", "Đại ca qua tab Cài đặt đăng nhập giúp Tèo nha!", [
+            { text: "Để sau", style: "cancel" },
+            { text: "Đi ngay", onPress: () => router.push('/(tabs)/settings') }
+        ]);
+        return;
+    }
+
     if (note) {
       setEditingId(note.id);
       setTitle(note.title);
@@ -93,55 +124,114 @@ export default function NotesScreen() {
     setModalVisible(true);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!title.trim() && !content.trim()) {
       setModalVisible(false); return;
     }
-    let updatedNotes = [...notes];
-    
-    if (editingId) {
-      // Khi sửa, giữ nguyên trạng thái isPinned cũ
-      updatedNotes = updatedNotes.map(n => 
-          n.id === editingId ? { ...n, title, content } : n
-      );
-    } else {
-      // Ghi chú mới mặc định không ghim
-      const newNote = { 
-          id: Date.now().toString(), 
-          title, 
-          content, 
-          date: new Date().toLocaleDateString('vi-VN'),
-          isPinned: false 
-      };
-      // Thêm vào đầu danh sách (nhưng sau các items đã Pin nhờ hàm sort ở saveNotes)
-      updatedNotes = [newNote, ...updatedNotes];
-    }
-    saveNotes(updatedNotes);
+    // Check lại lần nữa cho chắc
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+
     setModalVisible(false);
-  };
+    setLoading(true);
 
-  // [MỚI] Hàm xử lý Ghim/Bỏ ghim
-  const togglePin = (id: string) => {
-      const updatedNotes = notes.map(n => 
-          n.id === id ? { ...n, isPinned: !n.isPinned } : n
-      );
-      saveNotes(updatedNotes);
-      
-      // Đóng swipe nếu đang mở
-      if (rowRefs.current.has(id)) {
-          rowRefs.current.get(id)?.close();
+    try {
+      if (editingId) {
+        // --- SỬA (UPDATE) ---
+        const { error } = await supabase
+          .from('notes')
+          .update({ title, content })
+          .eq('id', editingId);
+
+        if (error) throw error;
+      } else {
+        // --- THÊM MỚI (INSERT) ---
+        // Lưu ý: ID dùng Date.now() vẫn ổn, nhưng tốt nhất sau này nên dùng UUID
+        const { error } = await supabase
+          .from('notes')
+          .insert({
+            id: Date.now().toString(),
+            title,
+            content,
+            date: new Date().toLocaleDateString('vi-VN'),
+            is_pinned: false,
+            user_id: session.user.id // Gán chính chủ
+          });
+
+        if (error) throw error;
       }
+      fetchNotes(); 
+    } catch (e: any) {
+      Alert.alert("Lỗi lưu", e.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleDelete = (id: string) => {
-    const updatedNotes = notes.filter(n => n.id !== id);
-    saveNotes(updatedNotes);
+  const handleDelete = async (id: string) => {
+    if (!session) return;
+    
+    // Đóng swipe
     if (rowRefs.current.has(id)) {
         rowRefs.current.get(id)?.close();
         rowRefs.current.delete(id);
     }
+
+    // Xóa Optimistic (Xóa trên giao diện ngay cho sướng mắt)
+    const oldNotes = [...notes];
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setNotes(notes.filter(n => n.id !== id));
+
+    // Xóa thật trên Cloud
+    const { error } = await supabase.from('notes').delete().eq('id', id);
+    if (error) {
+        Alert.alert("Lỗi xóa", "Server đang bận, thử lại sau nha đại ca!");
+        setNotes(oldNotes); // Hoàn tác nếu lỗi
+    }
   };
 
+  const togglePin = async (id: string, currentStatus: boolean) => {
+    if (!session) return;
+
+    // Optimistic Update
+    const updatedNotes = notes.map(n => n.id === id ? { ...n, isPinned: !currentStatus } : n);
+    setNotes(updatedNotes.sort((a, b) => {
+         if (a.isPinned === b.isPinned) return 0;
+         return a.isPinned ? -1 : 1;
+    }));
+
+    const { error } = await supabase
+        .from('notes')
+        .update({ is_pinned: !currentStatus })
+        .eq('id', id);
+
+    if (error) fetchNotes(); 
+  };
+
+  // --- RENDER ---
+  // Nếu chưa đăng nhập -> Hiện thông báo nhắc nhở
+  const renderEmptyComponent = () => {
+      if (!session) {
+          return (
+              <View style={{alignItems:'center', marginTop: 50}}>
+                  <Ionicons name="cloud-offline" size={60} color={colors.subText} />
+                  <Text style={{color: colors.subText, marginTop: 10, textAlign:'center'}}>
+                      Bạn chưa đăng nhập. {'\n'}Vào tab Cài đặt Đăng nhập để đồng bộ dữ liệu nhé!
+                  </Text>
+                  <TouchableOpacity onPress={() => router.push('/(tabs)/settings')} style={{marginTop:15, padding:10, backgroundColor:colors.primary, borderRadius:8}}>
+                      <Text style={{color:'white', fontWeight:'bold'}}>Đến Cài đặt ngay</Text>
+                  </TouchableOpacity>
+              </View>
+          );
+      }
+      return (
+          <Text style={{textAlign:'center', color: colors.subText, marginTop: 50}}>
+             {loading ? 'Đang tải từ vũ trụ...' : (searchQuery ? 'Không tìm thấy kết quả.' : 'Trống trơn. Bấm dấu + để thêm.')}
+          </Text>
+      );
+  };
+
+  // (Giữ nguyên logic render item và các hàm phụ trợ như handlePressLink...)
   const handlePressLink = async (text: string) => {
     if (text.startsWith('http')) {
         try {
@@ -150,9 +240,7 @@ export default function NotesScreen() {
                 toolbarColor: colors.card,
                 presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN
             });
-        } catch (error) {
-            console.log("Không thể mở trình duyệt:", error);
-        }
+        } catch (error) {}
     }
   };
 
@@ -166,13 +254,8 @@ export default function NotesScreen() {
 
   const renderItem = ({ item }: { item: QuickNote }) => {
     const isLink = item.title.startsWith('http');
-
     const renderRightActions = (progress: any, dragX: any) => {
-      const scale = dragX.interpolate({
-        inputRange: [-100, 0],
-        outputRange: [1, 0],
-        extrapolate: 'clamp',
-      });
+      const scale = dragX.interpolate({ inputRange: [-100, 0], outputRange: [1, 0], extrapolate: 'clamp' });
       return (
         <RectButton style={styles.deleteAction} onPress={() => handleDelete(item.id)}>
           <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}>
@@ -191,56 +274,31 @@ export default function NotesScreen() {
           overshootRight={false}
           containerStyle={{borderRadius: 12, overflow: 'hidden'}} 
         >
-          {/* [ĐÃ SỬA] Bỏ viền đậm, chỉ giữ logic màu nền */}
-          <View style={[
-              styles.card, 
-              { 
-                  // Vẫn giữ màu nền hơi khác chút để biết là đang ghim (nếu anh hai muốn bỏ luôn thì báo Tèo)
+          <View style={[styles.card, { 
                   backgroundColor: item.isPinned ? (colors.theme === 'dark' ? '#312e81' : '#EEF2FF') : colors.card, 
-                  // Viền về mặc định như các note khác
-                  borderColor: colors.border,
-                  borderWidth: 1
-              }
-          ]}>
-            
+                  borderColor: colors.border, borderWidth: 1
+              }]}>
             <View style={styles.titleSection}>
-               {/* Phần tiêu đề */}
                {isLink ? (
                   <TouchableOpacity onPress={() => handlePressLink(item.title)} style={{flex: 1}}>
-                      <Text numberOfLines={1} style={[styles.cardTitle, { color: colors.primary, textDecorationLine: 'underline' }]}>
-                        {item.title} 🔗
-                      </Text>
+                      <Text numberOfLines={1} style={[styles.cardTitle, { color: colors.primary, textDecorationLine: 'underline' }]}>{item.title} 🔗</Text>
                   </TouchableOpacity>
                ) : (
                   <View style={{flex: 1}}>
-                    <Text numberOfLines={1} style={[styles.cardTitle, { color: colors.text }]}>
-                       {item.title || '(Không tiêu đề)'}
-                    </Text>
+                    <Text numberOfLines={1} style={[styles.cardTitle, { color: colors.text }]}>{item.title || '(Không tiêu đề)'}</Text>
                   </View>
                )}
-               
-               {/* Ngày tháng */}
                <Text style={{fontSize: 11, color: colors.subText, marginLeft: 10, marginRight: 10}}>{item.date}</Text>
-               
-               {/* [ĐÃ SỬA] Đổi icon từ push-pin thành pin */}
-               <TouchableOpacity onPress={() => togglePin(item.id)} style={{padding: 4}}>
-                   <Ionicons 
-                      // Đổi tên icon ở đây nha anh hai
-                      name={item.isPinned ? "pin" : "pin-outline"} 
-                      size={20} 
-                      color={item.isPinned ? colors.primary : colors.subText} 
-                   />
+               <TouchableOpacity onPress={() => togglePin(item.id, item.isPinned)} style={{padding: 4}}>
+                   <Ionicons name={item.isPinned ? "pin" : "pin-outline"} size={20} color={item.isPinned ? colors.primary : colors.subText} />
                </TouchableOpacity>
             </View>
-
             <View style={[styles.divider, {backgroundColor: colors.border}]} />
-
             <TouchableOpacity style={styles.contentSection} activeOpacity={0.7} onPress={() => handleOpenModal(item)}>
                <Text numberOfLines={2} style={{color: colors.subText, fontSize: 14, lineHeight: 20}}>
                   {item.content || 'Chạm vào đây để viết nội dung...'}
                </Text>
             </TouchableOpacity>
-
           </View>
         </Swipeable>
       </View>
@@ -250,13 +308,15 @@ export default function NotesScreen() {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }}>
       <SafeAreaView style={{flex: 1}} edges={['top']}>
-        
         {/* HEADER */}
         <View style={styles.header}>
-          <Text style={[styles.headerTitle, {color: colors.text}]}>Ghi Chú 📝</Text>
-          <TouchableOpacity onPress={() => handleOpenModal()} style={[styles.addBtn, {backgroundColor: colors.primary}]}>
-            <Ionicons name="add" size={24} color="white" />
-          </TouchableOpacity>
+          <Text style={[styles.headerTitle, {color: colors.text}]}>Ghi Chú ☁️</Text>
+          <View style={{flexDirection:'row', alignItems:'center'}}>
+             {loading && <ActivityIndicator size="small" color={colors.primary} style={{marginRight:10}}/>}
+             <TouchableOpacity onPress={() => handleOpenModal()} style={[styles.addBtn, {backgroundColor: colors.primary, opacity: session ? 1 : 0.5}]}>
+                <Ionicons name="add" size={24} color="white" />
+             </TouchableOpacity>
+          </View>
         </View>
 
         {/* THANH TÌM KIẾM */}
@@ -265,15 +325,13 @@ export default function NotesScreen() {
                 <Ionicons name="search" size={20} color={colors.subText} />
                 <TextInput 
                     style={[styles.searchInput, {color: colors.text}]}
-                    placeholder="Tìm tiêu đề hoặc nội dung..." 
+                    placeholder="Tìm trên mây..." 
                     placeholderTextColor={colors.subText}
                     value={searchQuery}
                     onChangeText={setSearchQuery}
                 />
                 {searchQuery.length > 0 && (
-                    <TouchableOpacity onPress={() => {setSearchQuery(''); Keyboard.dismiss();}}>
-                        <Ionicons name="close-circle" size={20} color={colors.subText} />
-                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => {setSearchQuery(''); Keyboard.dismiss();}}><Ionicons name="close-circle" size={20} color={colors.subText} /></TouchableOpacity>
                 )}
             </View>
         </View>
@@ -283,33 +341,27 @@ export default function NotesScreen() {
           renderItem={renderItem} 
           keyExtractor={i => i.id} 
           contentContainerStyle={{padding: 20, paddingBottom: 100, paddingTop: 5}}
-          ListEmptyComponent={
-             <Text style={{textAlign:'center', color: colors.subText, marginTop: 50}}>
-                {searchQuery ? 'Không tìm thấy kết quả nào.' : 'Trống trơn. Bấm dấu + để thêm.'}
-             </Text>
-          }
+          ListEmptyComponent={renderEmptyComponent}
+          refreshing={loading}
+          onRefresh={fetchNotes}
         />
 
+        {/* MODAL EDIT */}
         <Modal visible={modalVisible} animationType="slide" transparent>
           <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalOverlay}>
             <View style={[styles.modalContent, {backgroundColor: colors.card, borderColor: colors.border}]}>
               <View style={styles.modalHeader}>
-                <Text style={{fontSize:18, fontWeight:'bold', color: colors.text}}>
-                    {editingId ? 'Sửa ghi chú' : 'Ghi chú mới'}
-                </Text>
+                <Text style={{fontSize:18, fontWeight:'bold', color: colors.text}}>{editingId ? 'Sửa ghi chú' : 'Ghi chú mới'}</Text>
                 <TouchableOpacity onPress={() => setModalVisible(false)}><Ionicons name="close" size={24} color={colors.text}/></TouchableOpacity>
               </View>
-              
               <ScrollView style={{ flex: 1 }}>
                 <Text style={[styles.label, {color: colors.subText}]}>Tiêu đề (hoặc Link):</Text>
-                <TextInput style={[styles.input, {backgroundColor: colors.iconBg, color: colors.text}]} placeholder="http://... hoặc Tiêu đề" placeholderTextColor={colors.subText} value={title} onChangeText={setTitle} />
-                
+                <TextInput style={[styles.input, {backgroundColor: colors.iconBg, color: colors.text}]} placeholder="Tiêu đề..." placeholderTextColor={colors.subText} value={title} onChangeText={setTitle} />
                 <Text style={[styles.label, {color: colors.subText}]}>Nội dung:</Text>
                 <TextInput style={[styles.input, {backgroundColor: colors.iconBg, color: colors.text, height: 200, textAlignVertical:'top'}]} placeholder="Chi tiết..." placeholderTextColor={colors.subText} multiline value={content} onChangeText={setContent} />
               </ScrollView>
-              
               <TouchableOpacity onPress={handleSave} style={[styles.saveBtn, {backgroundColor: colors.primary}]}>
-                  <Text style={{color:'white', fontWeight:'bold'}}>Lưu lại</Text>
+                  <Text style={{color:'white', fontWeight:'bold'}}>{loading ? 'Đang lưu...' : 'Lưu lên mây ☁️'}</Text>
               </TouchableOpacity>
             </View>
           </KeyboardAvoidingView>
@@ -319,6 +371,7 @@ export default function NotesScreen() {
   );
 }
 
+// Style giữ nguyên
 const styles = StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 15, paddingBottom: 10 },
   headerTitle: { fontSize: 24, fontWeight: 'bold' },
